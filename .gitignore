@@ -9,7 +9,14 @@ venv/
 .env.*
 !.env.example
 
-# Data
+# Data files
+*.geojson
+*.parquet
+*.shp
+*.shx
+*.dbf
+*.prj
+*.zip
 backend/data/
 temp_data/
 temp_carbon/
