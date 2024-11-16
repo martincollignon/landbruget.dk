@@ -9,57 +9,47 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class Pipeline:
-    """Orchestrates the data processing pipeline."""
-    
     def __init__(
         self,
-        name: str,
         source: DataSource,
-        transformers: List[Transformer],
-        processors: List[Processor],
         storage: Storage,
-        config: Dict[str, Any] = None
+        transformers: List[Transformer] = None,
+        processors: List[Processor] = None
     ):
-        self.name = name
         self.source = source
-        self.transformers = transformers
-        self.processors = processors
         self.storage = storage
-        self.config = config or {}
-        self.timestamp = datetime.now()
+        self.transformers = transformers or []
+        self.processors = processors or []
     
-    def run(self) -> bool:
-        """Execute the pipeline."""
+    async def execute(self) -> str:
+        """Execute the complete pipeline"""
         try:
             # 1. Fetch data
-            logger.info(f"[{self.name}] Fetching data from source")
-            data = self.source.fetch()
+            logger.info("Fetching data from source")
+            result = await self.source.fetch_data()
             
-            # Store raw data
-            logger.info(f"[{self.name}] Storing raw data")
-            raw_path = self.storage.store(data, f"raw/{self.name}")
-            logger.info(f"[{self.name}] Raw data stored at: {raw_path}")
+            # 2. Store raw data
+            logger.info("Storing raw data")
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            raw_path = self.storage.store_raw(result.data, f"data_{timestamp}")
             
-            # 2. Apply transformations
+            # 3. Apply transformations
+            data = result.data
             for transformer in self.transformers:
-                logger.info(f"[{self.name}] Applying transformer: {transformer}")
+                logger.info(f"Applying transformer: {transformer.__class__.__name__}")
                 data = transformer.transform(data)
             
-            # 3. Apply processors
+            # 4. Apply processors
             for processor in self.processors:
-                logger.info(f"[{self.name}] Applying processor: {processor}")
+                logger.info(f"Applying processor: {processor.__class__.__name__}")
                 data = processor.process(data)
             
-            # 4. Store processed results
-            logger.info(f"[{self.name}] Storing processed data")
-            processed_path = self.storage.store(data, f"processed/{self.name}")
-            logger.info(f"[{self.name}] Processed data stored at: {processed_path}")
+            # 5. Store processed data
+            logger.info("Storing processed data")
+            final_path = self.storage.store(data, f"data_{timestamp}")
             
-            return True
+            return final_path
             
         except Exception as e:
-            logger.error(f"[{self.name}] Pipeline error: {e}")
+            logger.error(f"Pipeline failed: {str(e)}")
             raise
-
-    def __str__(self) -> str:
-        return f"Pipeline({self.name})"

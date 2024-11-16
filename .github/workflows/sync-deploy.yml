@@ -1,0 +1,31 @@
+name: Sync and Deploy
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Runs at 2 AM UTC daily
+  workflow_dispatch:      # Allows manual trigger
+  push:
+    branches: [ main ]
+    
+env:
+  PROJECT_ID: landbrugsdata-1
+  REGION: europe-west1
+  
+jobs:
+  sync-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Google Auth
+      uses: 'google-github-actions/auth@v1'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+    
+    - name: Set up Cloud SDK
+      uses: 'google-github-actions/setup-gcloud@v1'
+    
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy geodata-api           --source backend           --region $REGION           --allow-unauthenticated

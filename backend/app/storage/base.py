@@ -14,6 +14,20 @@ class Storage(ABC):
         self.timestamp = datetime.now()
 
     @abstractmethod
+    def store_raw(self, data: Dict[str, Any], name: str) -> str:
+        """
+        Store raw data.
+        
+        Args:
+            data: Raw data to store
+            name: Name/identifier for the dataset
+            
+        Returns:
+            str: Path where the data was stored
+        """
+        pass
+
+    @abstractmethod
     def store(self, data: gpd.GeoDataFrame, name: str) -> str:
         """
         Store the data.
