@@ -5,7 +5,7 @@ from enum import Enum
 class DataSourceType(str, Enum):
     """Supported data source types"""
     WFS = "wfs"
-    EXCEL = "excel"
+    SHAPEFILE = "shapefile"
 
 class SourceConfig(BaseModel):
     """Base configuration for all data sources"""
@@ -23,6 +23,12 @@ class WFSConfig(SourceConfig):
     version: str = "2.0.0"
     additional_params: Dict[str, Any] = Field(default_factory=dict)
 
+class ShapefileConfig(SourceConfig):
+    """Configuration for Shapefile data sources"""
+    type: DataSourceType = DataSourceType.SHAPEFILE
+    url: str
+    filename: str
+
 # Active data sources configuration
 SOURCES = {
     "wfs_fvm_markers": WFSConfig(
@@ -30,6 +36,13 @@ SOURCES = {
         description="Latest marker data from Danish agricultural database",
         url="https://geodata.fvm.dk/geoserver/wfs",
         layer="Marker:Marker_seneste"
+    ),
+    "carbon_map": ShapefileConfig(
+        name="Danish Carbon Map",
+        description="Carbon content map from Danish Environmental Protection Agency",
+        url="https://www2.mst.dk/Udgiv/web/kulstof2022.zip",
+        filename="kulstof2022",
+        enabled=True
     )
 }
 

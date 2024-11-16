@@ -3,10 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 from datetime import datetime
+import os
 
 from app.data_sources.wfs_source import WFSDataSource
 from app.data_sources.base import DataSourceError
 from app.config.sources import get_source_config
+from app.data_sources.shapefile_source import ShapefileDataSource
+from app.storage import GeoParquetStorage  # Fixed import
+from app.pipeline import Pipeline
+from app.transformers.geojson import GeoJSONToGeoDataFrame
+from app.processors.optimize import OptimizeDataTypes
 
 # Configure logging
 logging.basicConfig(
@@ -102,6 +108,48 @@ async def get_fvm_markers_metadata():
             "layer": result.metadata.get('layer'),
             "last_updated": result.timestamp.isoformat()
         }
+        
+    except DataSourceError as e:
+        logger.error(f"Data source error: {str(e)}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        if source:
+            await source.close()
+
+@app.get("/api/carbon-map")
+async def get_carbon_map():
+    """Get carbon map data"""
+    source = None
+    try:
+        # Initialize components
+        storage = GeoParquetStorage(
+            bucket_name=os.getenv('GCS_BUCKET', 'landbrugsdata-geodata'),
+            project_id=os.getenv('GOOGLE_CLOUD_PROJECT', 'landbrugsdata-1')
+        )
+        
+        config = get_source_config("carbon_map")
+        source = ShapefileDataSource(config.dict())
+        
+        # Create pipeline
+        pipeline = Pipeline(
+            source=source,
+            storage=storage,
+            transformers=[GeoJSONToGeoDataFrame()],
+            processors=[OptimizeDataTypes()]
+        )
+        
+        # Execute pipeline
+        result = await pipeline.execute()
+        
+        return JSONResponse(
+            content={"path": result},
+            headers={
+                'X-Source-Updated': datetime.now().isoformat()
+            }
+        )
         
     except DataSourceError as e:
         logger.error(f"Data source error: {str(e)}")
