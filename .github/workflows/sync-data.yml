@@ -2,12 +2,12 @@ name: Sync Agricultural Data
 
 on:
   schedule:
-    - cron: '0 2 * * 0'  # Run at 2 AM UTC every Sunday
+    - cron: '0 2 * * 1'  # Run at 2 AM UTC every Monday
   workflow_dispatch:      # Allows manual trigger
 
 env:
   PROJECT_ID: landbrugsdata-1
-  BUCKET_NAME: landbrugsdata-geodata
+  BUCKET_NAME: landbrugsdata-1-data
   
 jobs:
   sync:

@@ -13,6 +13,7 @@ from app.storage import GeoParquetStorage  # Fixed import
 from app.pipeline import Pipeline
 from app.transformers.geojson import GeoJSONToGeoDataFrame
 from app.processors.optimize import OptimizeDataTypes
+from app.utils.scheduling import get_next_monday_timestamp
 
 # Configure logging
 logging.basicConfig(
@@ -60,80 +61,43 @@ async def list_sources():
         if config.enabled
     }
 
-@app.get("/api/wfs/fvm/markers")
-async def get_fvm_markers():
-    """Get marker data from FVM WFS"""
+@app.get("/api/agricultural-fields")
+async def get_agricultural_fields():
+    """Get agricultural field data from Danish Agricultural Agency WFS"""
     source = None
     try:
-        config = get_source_config("wfs_fvm_markers")
+        config = get_source_config("agricultural_fields")
         source = WFSDataSource(config.dict())
-        
         result = await source.fetch_data()
         
-        # Raw GeoJSON is already JSON-serializable
         return JSONResponse(
             content=result.data,
             headers={
-                'X-Feature-Count': str(result.metadata.get('feature_count', 0)),
-                'X-Source-Updated': result.timestamp.isoformat()
+                'X-Last-Updated': result.timestamp.isoformat(),
+                'X-Next-Update': get_next_monday_timestamp(),
+                'X-Update-Frequency': 'weekly'
             }
         )
-        
-    except DataSourceError as e:
-        logger.error(f"Data source error: {str(e)}")
-        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Error fetching agricultural fields: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         if source:
             await source.close()
 
-@app.get("/api/wfs/fvm/markers/metadata")
-async def get_fvm_markers_metadata():
-    """Get metadata about the FVM markers dataset"""
+@app.get("/api/wetlands")
+async def get_wetlands():
+    """Get wetlands map data"""
     source = None
     try:
-        config = get_source_config("wfs_fvm_markers")
-        source = WFSDataSource(config.dict())
-        
-        result = await source.fetch_data()
-        
-        return {
-            "status": "success",
-            "source": "wfs_fvm_markers",
-            "name": config.name,
-            "description": config.description,
-            "feature_count": result.metadata.get('feature_count', 0),
-            "layer": result.metadata.get('layer'),
-            "last_updated": result.timestamp.isoformat()
-        }
-        
-    except DataSourceError as e:
-        logger.error(f"Data source error: {str(e)}")
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-    finally:
-        if source:
-            await source.close()
-
-@app.get("/api/carbon-map")
-async def get_carbon_map():
-    """Get carbon map data"""
-    source = None
-    try:
-        # Initialize components
         storage = GeoParquetStorage(
-            bucket_name=os.getenv('GCS_BUCKET', 'landbrugsdata-geodata'),
+            bucket_name=os.getenv('GCS_BUCKET', 'landbrugsdata-1-data'),
             project_id=os.getenv('GOOGLE_CLOUD_PROJECT', 'landbrugsdata-1')
         )
         
-        config = get_source_config("carbon_map")
+        config = get_source_config("wetlands_map")
         source = ShapefileDataSource(config.dict())
         
-        # Create pipeline
         pipeline = Pipeline(
             source=source,
             storage=storage,
@@ -141,21 +105,10 @@ async def get_carbon_map():
             processors=[OptimizeDataTypes()]
         )
         
-        # Execute pipeline
         result = await pipeline.execute()
-        
-        return JSONResponse(
-            content={"path": result},
-            headers={
-                'X-Source-Updated': datetime.now().isoformat()
-            }
-        )
-        
-    except DataSourceError as e:
-        logger.error(f"Data source error: {str(e)}")
-        raise HTTPException(status_code=503, detail=str(e))
+        return JSONResponse(content={"path": result})
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Error fetching wetlands data: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         if source:

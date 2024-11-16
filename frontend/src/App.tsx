@@ -3,6 +3,11 @@ import maplibregl, { Map, Popup } from 'maplibre-gl';
 import axios from 'axios';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './App.css';
+import { FeatureCollection } from 'geojson';
+
+interface APIResponse {
+  data: FeatureCollection;
+}
 
 function App() {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -10,106 +15,67 @@ function App() {
 
   useEffect(() => {
     if (map.current) return;
-
-    if (mapContainer.current) {
-      map.current = new maplibregl.Map({
-        container: mapContainer.current,
+    
+    map.current = new Map({
+        container: mapContainer.current!,
         style: 'https://demotiles.maplibre.org/style.json',
-        center: [10.4234, 55.9987],
-        zoom: 7,
-      });
+        center: [10.4, 56.0],  // Center on Denmark
+        zoom: 7
+    });
 
-      map.current.on('load', async () => {
+    map.current.on('load', async () => {
         try {
-          console.log('Map loaded, fetching data...');
-          
-          const response = await axios.get<GeoJSON.FeatureCollection>(
-            'http://localhost:8000/api/geojson/farms'
-          );
-          
-          console.log('Data received:', response.data);
+            // Load agricultural fields
+            const fieldsResponse = await axios.get<APIResponse>(
+                'http://localhost:8000/api/agricultural-fields'
+            );
+            
+            // Load wetlands
+            const wetlandsResponse = await axios.get<APIResponse>(
+                'http://localhost:8000/api/wetlands'
+            );
 
-          if (!map.current) return;
+            if (!map.current) return;
 
-          // Add source
-          map.current.addSource('farms', {
-            type: 'geojson',
-            data: response.data,
-          });
+            map.current.addSource('agricultural-fields', {
+                type: 'geojson',
+                data: fieldsResponse.data.data
+            });
 
-          // Add circle layer
-          map.current.addLayer({
-            id: 'farms-circles',
-            type: 'circle',
-            source: 'farms',
-            paint: {
-              'circle-radius': 8,
-              'circle-color': '#2E7D32',
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#fff',
-            },
-          });
+            map.current.addSource('wetlands', {
+                type: 'geojson',
+                data: wetlandsResponse.data.data
+            });
 
-          // Add labels layer
-          map.current.addLayer({
-            id: 'farms-labels',
-            type: 'symbol',
-            source: 'farms',
-            layout: {
-              'text-field': ['get', 'name'],
-              'text-offset': [0, 1.5],
-              'text-anchor': 'top',
-              'text-size': 12,
-            },
-            paint: {
-              'text-color': '#000',
-              'text-halo-width': 1,
-              'text-halo-color': '#fff',
-            },
-          });
+            // Add wetlands layer
+            map.current.addLayer({
+                id: 'wetlands-fill',
+                type: 'fill',
+                source: 'wetlands',
+                paint: {
+                    'fill-color': '#2196F3',
+                    'fill-opacity': 0.6
+                }
+            });
 
-          // Add hover effect
-          map.current.on('mouseenter', 'farms-circles', () => {
-            if (map.current) {
-              map.current.getCanvas().style.cursor = 'pointer';
-            }
-          });
+            // Add agricultural fields layer
+            map.current.addLayer({
+                id: 'fields-fill',
+                type: 'fill',
+                source: 'agricultural-fields',
+                paint: {
+                    'fill-color': '#4CAF50',
+                    'fill-opacity': 0.4
+                }
+            });
 
-          map.current.on('mouseleave', 'farms-circles', () => {
-            if (map.current) {
-              map.current.getCanvas().style.cursor = '';
-            }
-          });
-
-          // Add click popup
-          map.current.on('click', 'farms-circles', (e) => {
-            if (!e.features?.length || !map.current) return;
-
-            const feature = e.features[0];
-            const coordinates = (feature.geometry as GeoJSON.Point).coordinates.slice() as [number, number];
-            const properties = feature.properties;
-
-            // Only create and add popup if map exists
-            if (map.current) {
-              new Popup()
-                .setLngLat(coordinates)
-                .setHTML(`
-                  <div style="padding: 10px;">
-                    <h3 style="margin: 0 0 10px 0;">${properties?.name}</h3>
-                    <p style="margin: 0;">Latitude: ${coordinates[1].toFixed(4)}</p>
-                    <p style="margin: 0;">Longitude: ${coordinates[0].toFixed(4)}</p>
-                  </div>
-                `)
-                .addTo(map.current);
-            }
-          });
-
+            // Add hover effects
+            addMapInteractivity(map.current);
 
         } catch (error) {
-          console.error('Error fetching GeoJSON data:', error);
+            console.error('Error loading data:', error);
         }
-      });
-    }
+    });
   }, []);
 
   return (
@@ -120,6 +86,36 @@ function App() {
       <div ref={mapContainer} className="map-container" />
     </div>
   );
+}
+
+function addMapInteractivity(map: Map) {
+    const popup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false
+    });
+
+    map.on('mousemove', 'fields-fill', (e) => {
+        if (e.features && e.features.length > 0) {
+            const feature = e.features[0];
+            
+            // Change cursor style
+            map.getCanvas().style.cursor = 'pointer';
+            
+            // Show popup
+            popup.setLngLat(e.lngLat)
+                .setHTML(`
+                    <h4>Agricultural Field</h4>
+                    <p>Crop Type: ${feature.properties?.cropType || 'Unknown'}</p>
+                    <p>Area: ${feature.properties?.area || 'Unknown'} ha</p>
+                `)
+                .addTo(map);
+        }
+    });
+
+    map.on('mouseleave', 'fields-fill', () => {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+    });
 }
 
 export default App;
