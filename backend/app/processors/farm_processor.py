@@ -1,45 +1,29 @@
-import pandas as pd
-from app.processors.base import GeoDataProcessor
-from app.config.data_sources import DATA_SOURCES
+from .base import Processor
+import geopandas as gpd
+import logging
 
-class FarmDataProcessor(GeoDataProcessor):
+logger = logging.getLogger(__name__)
+
+class FarmProcessor(Processor):
     """Processor for farm location data."""
     
-    def process(self) -> dict:
-        """Process farm data from Excel file into GeoJSON."""
-        config = DATA_SOURCES["farms"]
+    def process(self, data: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """Process farm data."""
+        logger.info("Processing farm data")
         
+        if not self.validate_data(data):
+            raise ValueError("Invalid input data")
+            
         try:
-            # Explicitly specify the Excel engine
-            df = pd.read_excel(
-                config.path,
-                engine='openpyxl',
-                sheet_name=0  # Read first sheet
-            )
+            # Add any farm-specific processing here
+            # For example, you might want to:
+            # - Filter by specific criteria
+            # - Add calculated fields
+            # - Merge with other data
             
-            # Verify the required columns exist
-            required_columns = ['name', 'latitude', 'longitude']
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            if missing_columns:
-                raise ValueError(f"Missing required columns: {missing_columns}")
+            logger.info(f"Processed {len(data)} farm records")
+            return data
             
-            features = []
-            for _, row in df.iterrows():
-                properties = {
-                    "name": str(row['name']),  # Convert to string to ensure it's serializable
-                }
-                coordinates = (float(row['longitude']), float(row['latitude']))
-                features.append(self.create_feature(properties, coordinates))
-
-            return {
-                "type": "FeatureCollection",
-                "features": features
-            }
-            
-        except FileNotFoundError:
-            print(f"Excel file not found at path: {config.path}")
-            raise
         except Exception as e:
-            print(f"Error processing farm data: {str(e)}")
-            print(f"File path attempted: {config.path}")
+            logger.error(f"Error processing farm data: {e}")
             raise

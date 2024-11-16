@@ -1,6 +1,10 @@
 fastapi
 uvicorn
+python-dotenv
+geopandas
+pyarrow
+flatgeobuf
+shapely
+google-cloud-storage
 pandas
 openpyxl
-python-dotenv
-pydantic
