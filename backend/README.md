@@ -4,18 +4,30 @@ Backend service for Danish agricultural and environmental data.
 
 ## Architecture
 
-src/
-├── sources/ # Data source implementations
-│ ├── base.py # Base source class
-│ ├── parsers/ # WFS/API data sources
-│ │ └── agricultural_fields/
-│ │ └── parser.py
-│ └── static/ # Static file sources
-│ └── wetlands/
-│ └── parser.py
-├── main.py # FastAPI application
-└── config.py # Configuration
-
+.
+├── backend/
+│   └── src/
+│       ├── sources/
+│       │   ├── base.py
+│       │   ├── parsers/          # API/WFS sources
+│       │   │   └── agricultural_fields/
+│       │   └── static/           # Static file sources
+│       │       ├── animal_welfare/
+│       │       ├── biogas/
+│       │       ├── fertilizer/
+│       │       ├── herd_data/
+│       │       ├── pesticides/
+│       │       ├── pig_movements/
+│       │       ├── subsidies/
+│       │       ├── visa/
+│       │       └── wetlands/
+│       ├── main.py
+│       └── config.py
+└── frontend/
+    └── src/
+        ├── components/
+        └── api/
+        
 ## API Endpoints
 
 - `GET /health` - Health check
