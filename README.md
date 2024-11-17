@@ -1,6 +1,6 @@
-# Danish Agricultural & Environmental Data Visualization
+# Landbrugsdata
 
-Interactive visualization of Danish agricultural and environmental data, providing real-time insights into field boundaries, crop types, and environmental data.
+The purpose of this project is to organize information about the Danish agricultural sector and make it universally accessible and useful.
 
 ![Backend](https://img.shields.io/badge/backend-Python%203.9-green.svg)
 ![Frontend](https://img.shields.io/badge/frontend-React%2018-blue.svg)
