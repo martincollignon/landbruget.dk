@@ -32,30 +32,30 @@ This project provides:
    - Visa: Agricultural visa statistics
 
 ## Project Structure
-
-backend/
-├── src/
-│   ├── sources/
-│   │   ├── base.py
-│   │   ├── parsers/          # API/WFS sources
-│   │   │   └── agricultural_fields/
-│   │   └── static/           # Static file sources
-│   │       ├── animal_welfare/
-│   │       ├── biogas/
-│   │       ├── fertilizer/
-│   │       ├── herd_data/
-│   │       ├── pesticides/
-│   │       ├── pig_movements/
-│   │       ├── subsidies/
-│   │       ├── visa/
-│   │       └── wetlands/
-│   ├── main.py
-│   └── config.py
+<pre>
+├── backend/
+│   ├── src/
+│   │   ├── sources/
+│   │   │   ├── base.py
+│   │   │   ├── parsers/           # API/WFS sources
+│   │   │   │   ├── agricultural_fields/
+│   │   │   ├── static/            # Static data files
+│   │   │   │   ├── animal_welfare/
+│   │   │   │   ├── biogas/
+│   │   │   │   ├── fertilizer/
+│   │   │   │   ├── herd_data/
+│   │   │   │   ├── pesticides/
+│   │   │   │   ├── pig_movements/
+│   │   │   │   ├── subsidies/
+│   │   │   │   ├── visa/
+│   │   │   │   └── wetlands/
+│   │   ├── main.py
+│   │   └── config.py
 └── frontend/
     └── src/
         ├── components/
         └── api/
-
+</pre>   
 ## Quick Start
 
 See backend/README.md and frontend/README.md for detailed setup instructions.
