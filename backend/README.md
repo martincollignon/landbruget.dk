@@ -1,42 +1,70 @@
 # Agricultural Data API
 
-Backend service for accessing and processing agricultural geospatial data.
+Backend service for Danish agricultural and environmental data.
 
-## Data Sources
+## Architecture
 
-The API supports multiple data sources:
-
-- WFS (Web Feature Service)
-  - Danish Agricultural Markers (`wfs_fvm_markers`)
-  - More sources to be added...
+src/
+├── sources/ # Data source implementations
+│ ├── base.py # Base source class
+│ ├── parsers/ # WFS/API data sources
+│ │ └── agricultural_fields/
+│ │ └── parser.py
+│ └── static/ # Static file sources
+│ └── wetlands/
+│ └── parser.py
+├── main.py # FastAPI application
+└── config.py # Configuration
 
 ## API Endpoints
 
 - `GET /health` - Health check
-- `GET /api/sources` - List available data sources
-- `GET /api/wfs/fvm/markers` - Get Danish agricultural markers
-- `GET /api/wfs/fvm/markers/metadata` - Get metadata about markers dataset
+- `GET /sources` - List available data sources
+- `GET /sources/{source_id}` - Get data for specific source
 
-## Configuration
+## Development Setup
 
-Data sources are configured in `app/config/sources.py`. Each source has:
-- Unique identifier (e.g., `wfs_fvm_markers`)
-- Type (e.g., `wfs`, `excel`)
-- Connection details (URL, layer, etc.)
-- Metadata (name, description)
+### Requirements
+- Python 3.9+
+- GDAL library
+- Virtual environment
 
-## Development
+### Installation Steps
+1. Create and activate virtual environment
+2. Install dependencies: `pip install -r requirements.txt`
+3. Run development server: `uvicorn src.main:app --reload`
 
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+## Adding New Data Sources
 
-2. Run the server:
-```bash
-uvicorn app.main:app --reload
-```
-    
-3. Access the API documentation:
-- OpenAPI UI: http://localhost:8000/docs   
-- ReDoc: http://localhost:8000/redoc
+
+1. Choose location:
+   - `sources/parsers/` for API/WFS sources
+   - `sources/static/` for static file sources
+
+2. Implement your parser:
+
+from ...base import Source
+class YourSource(Source):
+async def fetch(self) -> pd.DataFrame:
+# Implement data fetching
+pass
+
+3. Add to `config.py`:
+python
+SOURCES = {
+"your_source": {
+"name": "Your Source Name",
+"type": "wfs", # or "static"
+"enabled": True,
+# Add source-specific config
+}
+}
+## Environment Variables
+Required in `.env`:
+- GOOGLE_CLOUD_PROJECT: Your GCP project ID
+- GCS_BUCKET: Your GCS bucket name
+
+## Deployment
+Automatic deployment to Google Cloud Run:
+- On push to main branch
+- Weekly on Mondays at 2 AM UTC

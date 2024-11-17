@@ -11,12 +11,6 @@
   text-align: center;
 }
 
-.App-header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-}
-
 .map-container {
   flex: 1;
-  width: 100%;
 }

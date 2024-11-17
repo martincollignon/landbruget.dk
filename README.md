@@ -1,44 +1,51 @@
 # Danish Agricultural & Environmental Data Visualization
 
-A citizen science initiative for visualizing and analyzing Danish agricultural and environmental data.
+Interactive visualization of Danish agricultural and environmental data.
 
-## Features
+## Overview
 
-- Interactive map visualization of:
-  - Agricultural fields from Danish agricultural database
-  - Wetland areas from Environmental Protection Agency
-- Real-time data from WFS services
-- Automated data synchronization
-- Cloud storage optimization
+This project provides:
+- Backend API serving agricultural and environmental data from Danish government sources
+- Frontend map visualization of the data
+- Automated weekly data synchronization
 
 ## Data Sources
 
-- Agricultural Fields (WFS)
-  - Source: Danish Agricultural Agency
-  - Updates: Daily
-  - Content: Field boundaries and crop types
+1. Agricultural Fields (WFS)
+   - Source: Danish Agricultural Agency
+   - Updates: Weekly (Mondays at 2 AM UTC)
+   - Content: Field boundaries and crop types
 
-- Wetlands Map (Static)
-  - Source: Danish Environmental Protection Agency
-  - Updates: Yearly
-  - Content: Wetland areas and carbon content
+2. Wetlands Map (Static)
+   - Source: Danish Environmental Protection Agency
+   - Updates: Static dataset
+   - Content: Wetland areas and carbon content
 
-## Getting Started
+## Project Structure
+.
+├── backend/ # FastAPI backend
+│ ├── src/
+│ │ ├── sources/ # Data source implementations
+│ │ ├── main.py # FastAPI application
+│ │ └── config.py # Configuration
+│ └── README.md # Backend documentation
+└── frontend/ # React frontend
+├── src/
+│ ├── components/ # React components
+│ └── api/ # API client
+└── README.md # Frontend documentation
 
-1. Backend Setup:
-   ```bash
-   cd backend
-   python -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   uvicorn app.main:app --reload
-   ```
+## Quick Start
 
-2. Frontend Setup:
-   ```bash
-   cd frontend
-   npm install
-   npm start
-   ```
+See backend/README.md and frontend/README.md for detailed setup instructions.
 
-Visit http://localhost:3000 to view the map.
+Visit:
+- Frontend: http://localhost:3000
+- API docs: http://localhost:8000/docs
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
