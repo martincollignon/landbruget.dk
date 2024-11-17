@@ -21,19 +21,40 @@ This project provides:
    - Updates: Static dataset
    - Content: Wetland areas and carbon content
 
+3. Static Agricultural Data
+   - Animal Welfare: Inspection reports and focus areas
+   - Biogas: Production data, support schemes, and methane leakage reports
+   - Fertilizer: Nitrogen data and climate tool calculations
+   - Herd Data: CHR (Central Husbandry Register) data
+   - Pesticides: Usage statistics (2021-2023)
+   - Pig Movements: International transport data (2017-2024)
+   - Subsidies: Agricultural support schemes and project grants
+   - Visa: Agricultural visa statistics
+
 ## Project Structure
-.
-├── backend/ # FastAPI backend
-│ ├── src/
-│ │ ├── sources/ # Data source implementations
-│ │ ├── main.py # FastAPI application
-│ │ └── config.py # Configuration
-│ └── README.md # Backend documentation
-└── frontend/ # React frontend
+
+backend/
 ├── src/
-│ ├── components/ # React components
-│ └── api/ # API client
-└── README.md # Frontend documentation
+│   ├── sources/
+│   │   ├── base.py
+│   │   ├── parsers/          # API/WFS sources
+│   │   │   └── agricultural_fields/
+│   │   └── static/           # Static file sources
+│   │       ├── animal_welfare/
+│   │       ├── biogas/
+│   │       ├── fertilizer/
+│   │       ├── herd_data/
+│   │       ├── pesticides/
+│   │       ├── pig_movements/
+│   │       ├── subsidies/
+│   │       ├── visa/
+│   │       └── wetlands/
+│   ├── main.py
+│   └── config.py
+└── frontend/
+    └── src/
+        ├── components/
+        └── api/
 
 ## Quick Start
 
@@ -49,3 +70,8 @@ Visit:
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
+
+## Data Updates
+- WFS sources: Automatic weekly updates (Mondays at 2 AM UTC)
+- Static sources: Manual updates through pull requests
+- All updates are automatically deployed to Google Cloud Run
