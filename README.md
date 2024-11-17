@@ -169,4 +169,5 @@ This work is licensed under a Creative Commons Attribution 4.0 International Lic
 ## 🙏 Acknowledgments
 - Danish Agricultural Agency
 - Danish Environmental Protection Agency
+- Danish Energy Agency
 - SIRI
