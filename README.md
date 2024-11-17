@@ -57,6 +57,13 @@ frontend/
 
 ## 📊 Data Sources
 
+Data should have one or more of the following attributes to be useful:
+- CVR number (company registration number)
+- CHR number (herd registration number)
+- geospatial coordinates (point or polygon)
+- enhedsnummer (CVR individual identifier)
+- bfe number (cadaster number)
+
 ### Live Sources
 1. **Agricultural Fields (WFS)**
    - Updates: Weekly (Mondays 2 AM UTC)
