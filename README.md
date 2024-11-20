@@ -5,7 +5,7 @@ The purpose of this project is to organize information about the Danish agricult
 ![Backend](https://img.shields.io/badge/backend-Python%203.9-green.svg)
 ![Frontend](https://img.shields.io/badge/frontend-React%2018-blue.svg)
 ![License](https://img.shields.io/badge/license-CC--BY-green.svg)
-[![slack](https://img.shields.io/badge/slack-brigade-brightgreen.svg?logo=slack)](https://join.slack.com/t/landbrugsdata/shared_invite/zt-2unmop7jo-eig_P_ThEfi~A395tR_ySA)
+[![slack](https://img.shields.io/badge/slack-landbrugsdata-brightgreen.svg?logo=slack)](https://join.slack.com/t/landbrugsdata/shared_invite/zt-2unmop7jo-eig_P_ThEfi~A395tR_ySA)
 
 ## 🚀 Quick Start
 
