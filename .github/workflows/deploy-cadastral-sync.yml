@@ -35,7 +35,23 @@ jobs:
     - name: Build and Push Container
       run: |
         cd backend
-        gcloud builds submit --config cloudbuild.yaml .
+        gcloud builds submit --config cloudbuild.yaml . --quiet
+
+    - name: Check Build Status
+      run: |
+        BUILD_ID=$(gcloud builds list --limit=1 --format='value(id)')
+        while true; do
+          STATUS=$(gcloud builds describe $BUILD_ID --format='value(status)')
+          if [ "$STATUS" = "SUCCESS" ]; then
+            echo "Build completed successfully"
+            break
+          elif [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ]; then
+            echo "Build failed with status: $STATUS"
+            exit 1
+          fi
+          echo "Build status: $STATUS"
+          sleep 10
+        done
 
     - name: Deploy Cloud Run Job
       run: |
