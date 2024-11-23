@@ -1,0 +1,11 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}',
+      '-f', 'Dockerfile.sync',
+      '.'
+    ]
+images: ['gcr.io/${PROJECT_ID}/${_SERVICE_NAME}']
+substitutions:
+  _SERVICE_NAME: cadastral-sync
