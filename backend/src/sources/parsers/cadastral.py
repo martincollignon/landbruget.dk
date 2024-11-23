@@ -8,7 +8,6 @@ from ..base import Source
 import asyncio
 import os
 from dotenv import load_dotenv
-from supabase import create_client, Client
 from tqdm import tqdm
 
 def clean_value(value):
