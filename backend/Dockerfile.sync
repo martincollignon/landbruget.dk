@@ -27,25 +27,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Create a FastAPI wrapper for the sync script
-COPY <<EOF /app/main.py
-from fastapi import FastAPI
-from scripts.sync_cadastral import main as sync_cadastral
-
-app = FastAPI()
-
-@app.post("/")
-async def run_sync():
-    try:
-        await sync_cadastral()
-        return {"status": "success"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
-EOF
-
 # Use uvicorn to serve the FastAPI app
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
