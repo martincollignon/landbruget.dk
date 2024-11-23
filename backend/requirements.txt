@@ -11,6 +11,9 @@ gdal>=3.0.0
 # HTTP Client
 aiohttp>=3.8.0
 
+# Database
+asyncpg>=0.27.0
+
 # Data Validation
 pydantic>=1.8.0
 
