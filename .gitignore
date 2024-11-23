@@ -35,7 +35,7 @@ venv/
 backend/data/
 temp_data/
 temp_carbon/
-
+cadastral_schema.txt
 # Node
 node_modules/
 build/
