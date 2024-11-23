@@ -2,7 +2,7 @@ import asyncio
 import os
 from pathlib import Path
 import sys
-from supabase import create_client, Client
+import asyncpg
 from dotenv import load_dotenv
 
 # Add the backend directory to Python path
@@ -13,23 +13,30 @@ from src.sources.parsers.cadastral import Cadastral
 from src.config import SOURCES
 
 async def main():
-    """Sync cadastral data to Supabase"""
+    """Sync cadastral data to PostgreSQL"""
     load_dotenv()
     
-    supabase_url = os.getenv('SUPABASE_URL')
-    supabase_key = os.getenv('SUPABASE_KEY')
+    db_host = os.getenv('DB_HOST')
+    db_name = os.getenv('DB_NAME')
+    db_user = os.getenv('DB_USER')
+    db_password = os.getenv('DB_PASSWORD')
     
-    if not supabase_url or not supabase_key:
-        raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY environment variables")
+    if not all([db_host, db_name, db_user, db_password]):
+        raise ValueError("Missing database configuration")
     
     try:
-        # Initialize Supabase client
-        supabase: Client = create_client(supabase_url, supabase_key)
+        # Connect to PostgreSQL
+        conn = await asyncpg.connect(
+            host=db_host,
+            database=db_name,
+            user=db_user,
+            password=db_password
+        )
         print("Database connection established")
         
         cadastral = Cadastral(SOURCES["cadastral"])
-        # Modify the sync method to use supabase client instead of asyncpg
-        await cadastral.sync(supabase)
+        await cadastral.sync(conn)
+        await conn.close()
         
     except Exception as e:
         print(f"Error connecting to database: {str(e)}")
