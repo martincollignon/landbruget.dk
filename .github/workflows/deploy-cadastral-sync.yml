@@ -35,12 +35,20 @@ jobs:
     - name: Build and Push Container
       run: |
         cd backend
-        gcloud builds submit \
-          --tag gcr.io/$PROJECT_ID/$SERVICE_NAME \
-          --dockerfile Dockerfile.sync
+        gcloud builds submit --config cloudbuild.yaml .
 
     - name: Deploy Cloud Run Job
       run: |
+        gcloud run jobs update $SERVICE_NAME \
+          --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+          --region $REGION \
+          --service-account github@$PROJECT_ID.iam.gserviceaccount.com \
+          --set-secrets=DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest \
+          --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
+          --cpu=2 \
+          --memory=4Gi \
+          --max-retries=3 \
+          --task-timeout=2h || \
         gcloud run jobs create $SERVICE_NAME \
           --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
           --region $REGION \
