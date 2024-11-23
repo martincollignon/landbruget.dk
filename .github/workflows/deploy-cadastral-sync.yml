@@ -75,3 +75,20 @@ jobs:
           --memory=4Gi \
           --max-retries=3 \
           --task-timeout=2h
+
+    - name: Create Cloud Scheduler Job
+      run: |
+        gcloud scheduler jobs create http cadastral-sync-weekly \
+          --schedule="0 1 * * 1" \
+          --time-zone="Europe/Copenhagen" \
+          --uri="https://europe-west1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$SERVICE_NAME:run" \
+          --http-method=POST \
+          --oauth-service-account-email=github@$PROJECT_ID.iam.gserviceaccount.com \
+          --location=$REGION || \
+        gcloud scheduler jobs update http cadastral-sync-weekly \
+          --schedule="0 1 * * 1" \
+          --time-zone="Europe/Copenhagen" \
+          --uri="https://europe-west1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$SERVICE_NAME:run" \
+          --http-method=POST \
+          --oauth-service-account-email=github@$PROJECT_ID.iam.gserviceaccount.com \
+          --location=$REGION
