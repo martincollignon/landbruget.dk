@@ -343,23 +343,29 @@ class Cadastral(Source):
                 logger.warning(f"Failed to parse datetime: {dt_str}")
                 return None
 
+        def clean_field(value):
+            """Clean field value, handling NaN"""
+            if pd.isna(value):  # This handles both np.nan and pd.NA
+                return None
+            return clean_value(value)
+
         records = []
         for _, row in gdf.iterrows():
             record = {
-                'bfe_number': clean_value(row['BFEnummer']),
-                'business_event': clean_value(row['forretningshaendelse']),
-                'business_process': clean_value(row['forretningsproces']),
-                'latest_case_id': clean_value(row['senesteSagLokalId']),
-                'id_namespace': clean_value(row['id.namespace']),
-                'id_local': str(clean_value(row['id.lokalId'])),
-                'registration_from': parse_datetime(clean_value(row['registreringFra'])),
-                'effect_from': parse_datetime(clean_value(row['virkningFra'])),
-                'authority': clean_value(row['virkningsaktoer']),
-                'is_worker_housing': clean_value(row['arbejderbolig']),
-                'is_common_lot': clean_value(row['erFaelleslod']),
-                'has_owner_apartments': clean_value(row['hovedejendomOpdeltIEjerlejligheder']),
-                'is_separated_road': clean_value(row['udskiltVej']),
-                'agricultural_notation': clean_value(row['landbrugsnotering']),
+                'bfe_number': clean_field(row['BFEnummer']),
+                'business_event': clean_field(row['forretningshaendelse']),
+                'business_process': clean_field(row['forretningsproces']),
+                'latest_case_id': clean_field(row['senesteSagLokalId']),
+                'id_namespace': clean_field(row['id.namespace']),
+                'id_local': str(clean_field(row['id.lokalId'])),
+                'registration_from': parse_datetime(clean_field(row['registreringFra'])),
+                'effect_from': parse_datetime(clean_field(row['virkningFra'])),
+                'authority': clean_field(row['virkningsaktoer']),
+                'is_worker_housing': clean_field(row['arbejderbolig']),
+                'is_common_lot': clean_field(row['erFaelleslod']),
+                'has_owner_apartments': clean_field(row['hovedejendomOpdeltIEjerlejligheder']),
+                'is_separated_road': clean_field(row['udskiltVej']),
+                'agricultural_notation': clean_field(row['landbrugsnotering']),
                 'geometry': row['geometry'].wkt if 'geometry' in row else None
             }
             records.append(record)
