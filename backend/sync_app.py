@@ -4,7 +4,7 @@ from scripts.sync_cadastral import main as sync_cadastral
 
 # Configure logging with more detail
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
