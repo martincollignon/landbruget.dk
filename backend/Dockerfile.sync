@@ -3,8 +3,8 @@ FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0 as builder
 
 # Install Python and build dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-dev \
+    python3.12 \
+    python3.12-dev \
     python3-pip \
     gcc \
     g++ \
@@ -20,7 +20,7 @@ FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0
 
 # Install Python runtime
 RUN apt-get update && apt-get install -y \
-    python3.10 \
+    python3.12 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
