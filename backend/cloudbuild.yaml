@@ -1,8 +1,10 @@
 steps:
-  # Pull the previous images for layer caching
+  # Pull the previous images for layer caching (wrapped in shell to handle errors)
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['pull', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest']
-    continue-on-error: true
+    entrypoint: 'bash'
+    args: 
+      - '-c'
+      - 'docker pull gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest || exit 0'
 
   - name: 'gcr.io/cloud-builders/docker'
     args: [
