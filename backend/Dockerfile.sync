@@ -1,31 +1,27 @@
 # Build stage
-FROM python:3.9-slim as builder
+FROM osgeo/gdal:ubuntu-small-latest as builder
 
-# Install build dependencies
+# Install Python and build dependencies
 RUN apt-get update && apt-get install -y \
-    gdal-bin \
-    libgdal-dev \
+    python3.9 \
+    python3.9-dev \
+    python3-pip \
     gcc \
-    python3-dev \
     g++ \
     && rm -rf /var/lib/apt/lists/*
-
-# Set GDAL environment variables
-ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
-ENV C_INCLUDE_PATH=/usr/include/gdal
 
 # Install dependencies
 WORKDIR /install
 COPY requirements.txt .
-RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
+RUN pip3 install --prefix=/install --no-cache-dir -r requirements.txt
 
 # Final stage
-FROM python:3.9-slim
+FROM osgeo/gdal:ubuntu-small-latest
 
-# Install runtime dependencies for GDAL
+# Install Python runtime
 RUN apt-get update && apt-get install -y \
-    gdal-bin \
-    libgdal32 \
+    python3.9 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
@@ -36,4 +32,4 @@ WORKDIR /app
 COPY . .
 
 # Run the sync script directly
-CMD ["python", "sync_app.py"]
+CMD ["python3", "sync_app.py"]
