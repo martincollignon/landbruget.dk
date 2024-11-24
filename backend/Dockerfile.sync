@@ -22,10 +22,14 @@ RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 # Final stage
 FROM python:3.9-slim
 
-# Copy only runtime dependencies
+# Install runtime dependencies for GDAL
+RUN apt-get update && apt-get install -y \
+    gdal-bin \
+    libgdal30 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder
 COPY --from=builder /install /usr/local
-COPY --from=builder /usr/bin/gdal* /usr/bin/
-COPY --from=builder /usr/lib/libgdal.so* /usr/lib/
 
 # Set environment variables
 ENV PORT=8080
