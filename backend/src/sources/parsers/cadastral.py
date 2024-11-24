@@ -13,6 +13,7 @@ import asyncpg
 import logging
 from collections import deque
 from asyncio import Queue
+from datetime import datetime
 
 from ...base import Source, clean_value
 
@@ -333,6 +334,15 @@ class Cadastral(Source):
 
     def _prepare_records(self, gdf):
         """Convert GeoDataFrame rows to database records"""
+        def parse_datetime(dt_str):
+            if not dt_str:
+                return None
+            try:
+                return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                logger.warning(f"Failed to parse datetime: {dt_str}")
+                return None
+
         records = []
         for _, row in gdf.iterrows():
             record = {
@@ -342,8 +352,8 @@ class Cadastral(Source):
                 'latest_case_id': clean_value(row['senesteSagLokalId']),
                 'id_namespace': clean_value(row['id.namespace']),
                 'id_local': str(clean_value(row['id.lokalId'])),
-                'registration_from': clean_value(row['registreringFra']),
-                'effect_from': clean_value(row['virkningFra']),
+                'registration_from': parse_datetime(clean_value(row['registreringFra'])),
+                'effect_from': parse_datetime(clean_value(row['virkningFra'])),
                 'authority': clean_value(row['virkningsaktoer']),
                 'is_worker_housing': clean_value(row['arbejderbolig']),
                 'is_common_lot': clean_value(row['erFaelleslod']),
