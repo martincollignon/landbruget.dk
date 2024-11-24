@@ -32,6 +32,7 @@ class Cadastral(Source):
         self.page_size = 10000
         self.max_concurrent = 10  # Reduced for Cloud Run
         self.batch_size = 1000  # DB batch size
+        self.stream_chunk_size = 32768  # Increased from 8192 for better streaming performance
         self.namespaces = {
             'wfs': 'http://www.opengis.net/wfs/2.0',
             'mat': 'http://data.gov.dk/schemas/matrikel/1',
@@ -139,10 +140,10 @@ class Cadastral(Source):
             response.raise_for_status()
             
             parser = ET.XMLPullParser(['end'])
-            chunk_size = 8192  # Read in 8KB chunks
             
+            # Use larger chunk size for streaming
             while True:
-                chunk = await response.content.read(chunk_size)
+                chunk = await response.content.read(self.stream_chunk_size)
                 if not chunk:
                     break
                 parser.feed(chunk)
@@ -443,7 +444,14 @@ class Cadastral(Source):
             return int(root.get('numberMatched', '0'))
 
     async def _batch_insert(self, client, records):
-        """Insert records in batches"""
+        """Insert records in batches with verification"""
+        # Get count and sample before
+        count_before = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
+        
+        # Log the batch size
+        logger.info(f"Processing batch of {len(records)} records")
+        
+        # Do the insert with RETURNING clause
         query = """
             INSERT INTO cadastral_properties (
                 bfe_number, business_event, business_process, latest_case_id,
@@ -464,14 +472,24 @@ class Cadastral(Source):
                 is_separated_road = EXCLUDED.is_separated_road,
                 agricultural_notation = EXCLUDED.agricultural_notation,
                 geometry = EXCLUDED.geometry
+            RETURNING bfe_number
         """
         
-        await client.executemany(query, [
-            (
-                r['bfe_number'], r['business_event'], r['business_process'],
-                r['latest_case_id'], r['id_namespace'], r['id_local'],
-                r['registration_from'], r['effect_from'], r['authority'],
-                r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
-                r['is_separated_road'], r['agricultural_notation'], r['geometry']
-            ) for r in records
+        results = await client.executemany(query, [
+            (r['bfe_number'], r['business_event'], r['business_process'],
+             r['latest_case_id'], r['id_namespace'], r['id_local'],
+             r['registration_from'], r['effect_from'], r['authority'],
+             r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
+             r['is_separated_road'], r['agricultural_notation'], r['geometry'])
+            for r in records
         ])
+        
+        # Get count after
+        count_after = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
+        
+        # Log detailed stats
+        logger.info(f"Batch stats:")
+        logger.info(f"  Records before: {count_before:,}")
+        logger.info(f"  Records after: {count_after:,}")
+        logger.info(f"  Net change: {count_after - count_before:,}")
+        logger.info(f"  Records processed: {len(records):,}")
