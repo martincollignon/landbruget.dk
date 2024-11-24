@@ -443,7 +443,11 @@ class Cadastral(Source):
             return int(root.get('numberMatched', '0'))
 
     async def _batch_insert(self, client, records):
-        """Insert records in batches"""
+        """Insert records in batches with verification"""
+        # Get count before
+        count_before = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
+        
+        # Do the insert
         query = """
             INSERT INTO cadastral_properties (
                 bfe_number, business_event, business_process, latest_case_id,
@@ -475,3 +479,19 @@ class Cadastral(Source):
                 r['is_separated_road'], r['agricultural_notation'], r['geometry']
             ) for r in records
         ])
+        
+        # Get count after
+        count_after = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
+        
+        # Log the change
+        logger.info(f"Records before: {count_before:,}, after: {count_after:,}, difference: {count_after - count_before:,}")
+        
+        # Sample some BFE numbers from this batch
+        sample_bfes = [r['bfe_number'] for r in records[:5]]
+        verification = await client.fetch("""
+            SELECT bfe_number, registration_from 
+            FROM cadastral_properties 
+            WHERE bfe_number = ANY($1)
+        """, sample_bfes)
+        
+        logger.info(f"Sample verification: {verification}")
