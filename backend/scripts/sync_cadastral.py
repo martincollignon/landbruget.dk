@@ -25,7 +25,7 @@ async def main():
         raise ValueError("Missing database configuration")
     
     try:
-        # Connect to PostgreSQL
+        # Connect to PostgreSQL using Unix socket
         conn = await asyncpg.connect(
             host=db_host,
             database=db_name,
