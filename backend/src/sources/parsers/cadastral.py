@@ -129,17 +129,16 @@ class Cadastral(Source):
         return feature
 
     async def _fetch_chunk(self, session, start_index):
-        """Fetch and parse a chunk of features"""
+        """Fetch and parse a chunk of features using streaming"""
         params = self._get_params(start_index, self.page_size)
         features = []
         
         logger.info(f"Fetching chunk starting at index {start_index}")
         async with session.get(self.config['url'], params=params) as response:
             response.raise_for_status()
-            logger.info(f"Received response for chunk {start_index}")
             
             parser = ET.XMLPullParser(['end'])
-            chunk_size = 8192
+            chunk_size = 8192  # Read in 8KB chunks
             
             while True:
                 chunk = await response.content.read(chunk_size)
@@ -150,7 +149,7 @@ class Cadastral(Source):
                     if elem.tag.endswith('SamletFastEjendom_Gaeldende'):
                         feature = self._parse_feature(elem, self.namespaces)
                         features.append(feature)
-                        elem.clear()
+                        elem.clear()  # Clear element to free memory
         
         logger.info(f"Processed {len(features)} features from chunk {start_index}")
         return features
@@ -228,7 +227,7 @@ class Cadastral(Source):
         # Create database tables
         await self._create_tables(client)
         
-        # Create queues with reasonable sizes for Cloud Run
+        # Create queues
         feature_queue = Queue(maxsize=self.max_concurrent * 2)
         db_queue = Queue(maxsize=self.batch_size * 2)
         
@@ -239,11 +238,9 @@ class Cadastral(Source):
         async def fetch_worker():
             try:
                 async with self._get_session() as session:
-                    # Get total count
                     total_features = await self._get_total_count(session)
                     logger.info(f"Found {total_features:,} total features")
                     
-                    # Fetch in batches
                     batch_size = self.page_size * self.max_concurrent
                     for batch_start in range(0, total_features, batch_size):
                         tasks = []
@@ -267,7 +264,7 @@ class Cadastral(Source):
                 
                 while True:
                     if feature_queue.empty() and fetch_complete.is_set():
-                        if features_batch:  # Process remaining features
+                        if features_batch:
                             await self._process_features_batch(features_batch, db_queue)
                         break
                     
@@ -275,11 +272,11 @@ class Cadastral(Source):
                         features = await asyncio.wait_for(feature_queue.get(), timeout=1.0)
                         features_batch.extend(features)
                         records_processed += len(features)
-                        logger.info(f"Processed {records_processed:,} records so far")
                         
                         if len(features_batch) >= self.batch_size:
                             await self._process_features_batch(features_batch, db_queue)
                             features_batch = []
+                            logger.info(f"Processed {records_processed:,} records")
                             
                         feature_queue.task_done()
                     except asyncio.TimeoutError:
@@ -330,14 +327,8 @@ class Cadastral(Source):
 
     async def _process_features_batch(self, features, db_queue):
         """Process a batch of features and queue for DB insertion"""
-        # Debug first feature before GeoDataFrame conversion
-        logger.debug(f"Feature before GDF: {features[0]['properties']}")
         gdf = gpd.GeoDataFrame.from_features(features)
-        # Debug after GeoDataFrame conversion
-        logger.debug(f"GDF types: {gdf.dtypes}")
         records = self._prepare_records(gdf)
-        # Debug after prepare_records
-        logger.debug(f"Record types: {[(k, type(v)) for k,v in records[0].items()]}")
         await db_queue.put(records)
 
     def _prepare_records(self, gdf):
@@ -409,24 +400,27 @@ class Cadastral(Source):
                 authority, is_worker_housing, is_common_lot, has_owner_apartments,
                 is_separated_road, agricultural_notation, geometry
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
+            ON CONFLICT (bfe_number) DO UPDATE SET
+                business_event = EXCLUDED.business_event,
+                business_process = EXCLUDED.business_process,
+                latest_case_id = EXCLUDED.latest_case_id,
+                registration_from = EXCLUDED.registration_from,
+                effect_from = EXCLUDED.effect_from,
+                authority = EXCLUDED.authority,
+                is_worker_housing = EXCLUDED.is_worker_housing,
+                is_common_lot = EXCLUDED.is_common_lot,
+                has_owner_apartments = EXCLUDED.has_owner_apartments,
+                is_separated_road = EXCLUDED.is_separated_road,
+                agricultural_notation = EXCLUDED.agricultural_notation,
+                geometry = EXCLUDED.geometry
         """
         
-        batch_size = 2000
-        total_records = len(records)
-        records_synced = 0
-        
-        logger.info(f"Starting database upload of {total_records:,} records...")
-        for i in range(0, total_records, batch_size):
-            batch = records[i:i + batch_size]
-            await client.executemany(query, [
-                (
-                    r['bfe_number'], r['business_event'], r['business_process'],
-                    r['latest_case_id'], r['id_namespace'], r['id_local'],
-                    r['registration_from'], r['effect_from'], r['authority'],
-                    r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
-                    r['is_separated_road'], r['agricultural_notation'], r['geometry']
-                ) for r in batch
-            ])
-            records_synced += len(batch)
-            if records_synced % 10000 == 0:
-                logger.info(f"Synced {records_synced:,} of {total_records:,} records")
+        await client.executemany(query, [
+            (
+                r['bfe_number'], r['business_event'], r['business_process'],
+                r['latest_case_id'], r['id_namespace'], r['id_local'],
+                r['registration_from'], r['effect_from'], r['authority'],
+                r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
+                r['is_separated_road'], r['agricultural_notation'], r['geometry']
+            ) for r in records
+        ])
