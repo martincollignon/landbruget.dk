@@ -22,8 +22,8 @@ async def main():
     load_dotenv()
     
     # Add debug logging
-    logging.getLogger('src.sources.parsers.cadastral').setLevel(logging.DEBUG)
-    logging.getLogger('src.base').setLevel(logging.DEBUG)
+    logging.getLogger('src.sources.parsers.cadastral').setLevel(logging.INFO)
+    logging.getLogger('src.base').setLevel(logging.INFO)
     
     db_host = os.getenv('DB_HOST')
     db_name = os.getenv('DB_NAME')
