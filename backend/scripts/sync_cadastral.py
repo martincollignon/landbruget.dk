@@ -4,6 +4,11 @@ from pathlib import Path
 import sys
 import asyncpg
 from dotenv import load_dotenv
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add the backend directory to Python path
 backend_dir = Path(__file__).parent.parent
@@ -24,23 +29,26 @@ async def main():
     if not all([db_host, db_name, db_user, db_password]):
         raise ValueError("Missing database configuration")
     
+    conn = None
     try:
-        # Connect to PostgreSQL using Unix socket
         conn = await asyncpg.connect(
             host=db_host,
             database=db_name,
             user=db_user,
             password=db_password
         )
-        print("Database connection established")
+        logger.info("Database connection established")
         
         cadastral = Cadastral(SOURCES["cadastral"])
-        await cadastral.sync(conn)
-        await conn.close()
+        total_synced = await cadastral.sync(conn)
+        logger.info(f"Total records synced: {total_synced:,}")
         
     except Exception as e:
-        print(f"Error connecting to database: {str(e)}")
+        logger.error(f"Error connecting to database: {str(e)}")
         raise
+    finally:
+        if conn:
+            await conn.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
