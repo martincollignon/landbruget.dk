@@ -1,25 +1,18 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any
 import pandas as pd
-from datetime import datetime
+
+def clean_value(value):
+    """Clean a value by removing whitespace and converting empty strings to None"""
+    if isinstance(value, str):
+        value = value.strip()
+        return None if value == '' else value
+    return value
 
 class Source(ABC):
-    """Base class for all data sources"""
-    
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config):
         self.config = config
-        self.name = config['name']
-        self.frequency = config.get('frequency', 'static')
-        
+
     @abstractmethod
     async def fetch(self) -> pd.DataFrame:
-        """Fetch and transform data into final DataFrame format"""
+        """Fetch data from source and return as DataFrame"""
         pass
-    
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        return {
-            'name': self.name,
-            'frequency': self.frequency,
-            'last_updated': datetime.now().isoformat()
-        }
