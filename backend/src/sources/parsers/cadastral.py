@@ -318,23 +318,28 @@ class Cadastral(Source):
                     try:
                         records = await asyncio.wait_for(db_queue.get(), timeout=1.0)
                         batch_number += 1
-                        async with client.transaction():
+                        
+                        # Explicit transaction management
+                        tr = client.transaction()
+                        await tr.start()
+                        
+                        try:
                             await self._batch_insert(client, records)
-                            await client.execute('COMMIT')  # Explicitly commit
-                        total_synced += len(records)
-                        logger.info(f"Batch {batch_number}: Synced {len(records)} records. Total: {total_synced:,}")
+                            await tr.commit()
+                            total_synced += len(records)
+                            logger.info(f"Batch {batch_number}: Synced {len(records)} records. Total: {total_synced:,}")
+                        except Exception as e:
+                            await tr.rollback()
+                            logger.error(f"Failed to commit batch {batch_number}: {str(e)}")
+                            raise
+                        
                         db_queue.task_done()
+                        
                     except asyncio.TimeoutError:
                         continue
                     except Exception as e:
-                        logger.error(f"Error in batch {batch_number}: {str(e)}")
+                        logger.error(f"Error processing batch {batch_number}: {str(e)}")
                         raise
-                
-                # Verify final count
-                final_count = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
-                logger.info(f"Final database count: {final_count:,}")
-                if final_count != total_synced:
-                    logger.error(f"Count mismatch! Reported: {total_synced:,}, Actual: {final_count:,}")
                 
                 return total_synced
             except Exception as e:
