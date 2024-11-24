@@ -6,8 +6,10 @@ import xml.etree.ElementTree as ET
 from tqdm import tqdm
 import geopandas as gpd
 import aiohttp
+import pandas as pd
 from dotenv import load_dotenv
 from shapely.geometry import Polygon, MultiPolygon
+import asyncpg
 
 from ...base import Source, clean_value
 
@@ -30,10 +32,12 @@ class Cadastral(Source):
     def _get_session(self):
         """Create an HTTP session with connection pooling"""
         connector = aiohttp.TCPConnector(limit=self.max_concurrent)
+        timeout = aiohttp.ClientTimeout(total=300)  # 5 minute timeout
         return aiohttp.ClientSession(
             auth=aiohttp.BasicAuth(self.username, self.password),
             headers={'User-Agent': 'Mozilla/5.0'},
-            connector=connector
+            connector=connector,
+            timeout=timeout
         )
 
     def _get_params(self, start_index=0, max_features=None):
@@ -136,6 +140,17 @@ class Cadastral(Source):
         
         return features
 
+    async def _fetch_chunk_with_retry(self, session, start_index, max_retries=3):
+        """Fetch chunk with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                return await self._fetch_chunk(session, start_index)
+            except Exception as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    raise
+                print(f"Retry {attempt + 1}/{max_retries} for chunk {start_index}: {str(e)}")
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+    
     async def fetch(self) -> pd.DataFrame:
         """Fetch cadastral data using parallel streaming requests"""
         all_features = []
@@ -164,7 +179,7 @@ class Cadastral(Source):
                     start_idx = batch_start + offset
                     if start_idx >= total_features:
                         break
-                    tasks.append(self._fetch_chunk(session, start_idx))
+                    tasks.append(self._fetch_chunk_with_retry(session, start_idx))
                 
                 print(f"Fetching records {batch_start:,} to {min(batch_start + batch_size, total_features):,}...")
                 batch_results = await asyncio.gather(*tasks)
@@ -182,108 +197,122 @@ class Cadastral(Source):
         """Sync cadastral data to PostgreSQL database"""
         print("Starting cadastral sync...")
         
-        # 1. Create table if it doesn't exist
-        await client.execute("""
-            CREATE TABLE IF NOT EXISTS cadastral_properties (
-                bfe_number INTEGER PRIMARY KEY,
-                business_event TEXT,
-                business_process TEXT,
-                latest_case_id TEXT,
-                id_namespace TEXT,
-                id_local TEXT,
-                registration_from TIMESTAMP WITH TIME ZONE,
-                effect_from TIMESTAMP WITH TIME ZONE,
-                authority TEXT,
-                is_worker_housing BOOLEAN,
-                is_common_lot BOOLEAN,
-                has_owner_apartments BOOLEAN,
-                is_separated_road BOOLEAN,
-                agricultural_notation TEXT,
-                geometry GEOMETRY(MULTIPOLYGON, 25832)
-            );
-            
-            CREATE INDEX IF NOT EXISTS cadastral_properties_geometry_idx 
-            ON cadastral_properties USING GIST (geometry);
-        """)
-        
-        # 2. Fetch data
-        print("Fetching data...")
-        gdf = await self.fetch()
-        
-        print("\nPreparing records...")
-        records = []
-        with tqdm(total=len(gdf), 
-                 desc="Converting records", 
-                 unit="records",
-                 unit_scale=True,
-                 miniters=1) as pbar:
-            for _, row in gdf.iterrows():
-                record = {
-                    'bfe_number': clean_value(row['BFEnummer']),
-                    'business_event': clean_value(row['forretningshaendelse']),
-                    'business_process': clean_value(row['forretningsproces']),
-                    'latest_case_id': clean_value(row['senesteSagLokalId']),
-                    'id_namespace': clean_value(row['id.namespace']),
-                    'id_local': clean_value(row['id.lokalId']),
-                    'registration_from': clean_value(row['registreringFra']),
-                    'effect_from': clean_value(row['virkningFra']),
-                    'authority': clean_value(row['virkningsaktoer']),
-                    'is_worker_housing': clean_value(row['arbejderbolig']),
-                    'is_common_lot': clean_value(row['erFaelleslod']),
-                    'has_owner_apartments': clean_value(row['hovedejendomOpdeltIEjerlejligheder']),
-                    'is_separated_road': clean_value(row['udskiltVej']),
-                    'agricultural_notation': clean_value(row['landbrugsnotering']),
-                    'geometry': row['geometry'].wkt if 'geometry' in row else None
-                }
-                records.append(record)
-                pbar.update(1)
-
-        batch_size = 2000
-        total_records = len(records)
-        
-        print("\nUploading to database...")
-        with tqdm(total=total_records, 
-                 desc="Uploading records", 
-                 unit="records",
-                 unit_scale=True,
-                 miniters=1) as pbar:
-            for i in range(0, total_records, batch_size):
-                batch = records[i:i + batch_size]
-                # Create the SQL query for batch upsert
-                query = """
-                    INSERT INTO cadastral_properties (
-                        bfe_number, business_event, business_process, latest_case_id,
-                        id_namespace, id_local, registration_from, effect_from,
-                        authority, is_worker_housing, is_common_lot, has_owner_apartments,
-                        is_separated_road, agricultural_notation, geometry
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
-                    ON CONFLICT (bfe_number) DO UPDATE SET
-                        business_event = EXCLUDED.business_event,
-                        business_process = EXCLUDED.business_process,
-                        latest_case_id = EXCLUDED.latest_case_id,
-                        id_namespace = EXCLUDED.id_namespace,
-                        id_local = EXCLUDED.id_local,
-                        registration_from = EXCLUDED.registration_from,
-                        effect_from = EXCLUDED.effect_from,
-                        authority = EXCLUDED.authority,
-                        is_worker_housing = EXCLUDED.is_worker_housing,
-                        is_common_lot = EXCLUDED.is_common_lot,
-                        has_owner_apartments = EXCLUDED.has_owner_apartments,
-                        is_separated_road = EXCLUDED.is_separated_road,
-                        agricultural_notation = EXCLUDED.agricultural_notation,
-                        geometry = ST_GeomFromText(EXCLUDED.geometry, 25832)
-                """
-                # Execute batch upsert
-                await client.executemany(query, [
-                    (
-                        r['bfe_number'], r['business_event'], r['business_process'],
-                        r['latest_case_id'], r['id_namespace'], r['id_local'],
-                        r['registration_from'], r['effect_from'], r['authority'],
-                        r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
-                        r['is_separated_road'], r['agricultural_notation'], r['geometry']
-                    ) for r in batch
-                ])
-                pbar.update(len(batch))
+        try:
+            # Create table outside main transaction
+            await client.execute("""
+                CREATE TABLE IF NOT EXISTS cadastral_properties (
+                    bfe_number INTEGER PRIMARY KEY,
+                    business_event TEXT,
+                    business_process TEXT,
+                    latest_case_id TEXT,
+                    id_namespace TEXT,
+                    id_local TEXT,
+                    registration_from TIMESTAMP WITH TIME ZONE,
+                    effect_from TIMESTAMP WITH TIME ZONE,
+                    authority TEXT,
+                    is_worker_housing BOOLEAN,
+                    is_common_lot BOOLEAN,
+                    has_owner_apartments BOOLEAN,
+                    is_separated_road BOOLEAN,
+                    agricultural_notation TEXT,
+                    geometry GEOMETRY(MULTIPOLYGON, 25832)
+                );
                 
-        print("\nSync completed!")
-        return total_records
+                CREATE INDEX IF NOT EXISTS cadastral_properties_geometry_idx 
+                ON cadastral_properties USING GIST (geometry);
+            """)
+            
+            # Fetch data and prepare for insert
+            print("Fetching data...")
+            gdf = await self.fetch()
+            
+            # Use transaction for the data upload
+            async with client.transaction():
+                # 2. Fetch data
+                print("Fetching data...")
+                gdf = await self.fetch()
+                
+                print("\nPreparing records...")
+                records = []
+                with tqdm(total=len(gdf), 
+                         desc="Converting records", 
+                         unit="records",
+                         unit_scale=True,
+                         miniters=1) as pbar:
+                    for _, row in gdf.iterrows():
+                        record = {
+                            'bfe_number': clean_value(row['BFEnummer']),
+                            'business_event': clean_value(row['forretningshaendelse']),
+                            'business_process': clean_value(row['forretningsproces']),
+                            'latest_case_id': clean_value(row['senesteSagLokalId']),
+                            'id_namespace': clean_value(row['id.namespace']),
+                            'id_local': clean_value(row['id.lokalId']),
+                            'registration_from': clean_value(row['registreringFra']),
+                            'effect_from': clean_value(row['virkningFra']),
+                            'authority': clean_value(row['virkningsaktoer']),
+                            'is_worker_housing': clean_value(row['arbejderbolig']),
+                            'is_common_lot': clean_value(row['erFaelleslod']),
+                            'has_owner_apartments': clean_value(row['hovedejendomOpdeltIEjerlejligheder']),
+                            'is_separated_road': clean_value(row['udskiltVej']),
+                            'agricultural_notation': clean_value(row['landbrugsnotering']),
+                            'geometry': row['geometry'].wkt if 'geometry' in row else None
+                        }
+                        records.append(record)
+                        pbar.update(1)
+
+                batch_size = 2000
+                total_records = len(records)
+                
+                print("\nUploading to database...")
+                with tqdm(total=total_records, 
+                         desc="Uploading records", 
+                         unit="records",
+                         unit_scale=True,
+                         miniters=1) as pbar:
+                    for i in range(0, total_records, batch_size):
+                        batch = records[i:i + batch_size]
+                        # Create the SQL query for batch upsert
+                        query = """
+                            INSERT INTO cadastral_properties (
+                                bfe_number, business_event, business_process, latest_case_id,
+                                id_namespace, id_local, registration_from, effect_from,
+                                authority, is_worker_housing, is_common_lot, has_owner_apartments,
+                                is_separated_road, agricultural_notation, geometry
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
+                            ON CONFLICT (bfe_number) DO UPDATE SET
+                                business_event = EXCLUDED.business_event,
+                                business_process = EXCLUDED.business_process,
+                                latest_case_id = EXCLUDED.latest_case_id,
+                                id_namespace = EXCLUDED.id_namespace,
+                                id_local = EXCLUDED.id_local,
+                                registration_from = EXCLUDED.registration_from,
+                                effect_from = EXCLUDED.effect_from,
+                                authority = EXCLUDED.authority,
+                                is_worker_housing = EXCLUDED.is_worker_housing,
+                                is_common_lot = EXCLUDED.is_common_lot,
+                                has_owner_apartments = EXCLUDED.has_owner_apartments,
+                                is_separated_road = EXCLUDED.is_separated_road,
+                                agricultural_notation = EXCLUDED.agricultural_notation,
+                                geometry = ST_GeomFromText(EXCLUDED.geometry, 25832)
+                        """
+                        # Execute batch upsert
+                        await client.executemany(query, [
+                            (
+                                r['bfe_number'], r['business_event'], r['business_process'],
+                                r['latest_case_id'], r['id_namespace'], r['id_local'],
+                                r['registration_from'], r['effect_from'], r['authority'],
+                                r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
+                                r['is_separated_road'], r['agricultural_notation'], r['geometry']
+                            ) for r in batch
+                        ])
+                        pbar.update(len(batch))
+                
+                print("\nSync completed!")
+                return total_records
+
+        except asyncpg.PostgresError as e:
+            print(f"Database error during sync: {str(e)}")
+            raise
+        except Exception as e:
+            print(f"Unexpected error during sync: {str(e)}")
+            raise
