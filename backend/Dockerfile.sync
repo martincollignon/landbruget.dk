@@ -1,5 +1,5 @@
 # Build stage
-FROM osgeo/gdal:ubuntu-small-latest as builder
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0 as builder
 
 # Install Python and build dependencies
 RUN apt-get update && apt-get install -y \
@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip3 install --prefix=/install --no-cache-dir -r requirements.txt
 
 # Final stage
-FROM osgeo/gdal:ubuntu-small-latest
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0
 
 # Install Python runtime
 RUN apt-get update && apt-get install -y \
