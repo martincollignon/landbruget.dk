@@ -91,9 +91,6 @@ class Cadastral(Source):
             'geometry': None
         }
         
-        # Add debug for raw XML values
-        logger.debug(f"Raw latest_case_id: {member.find('.//mat:senesteSagLokalId', namespaces).text}")
-        
         # Get all fields from the XML
         for element in member:
             if element.tag.endswith('geometri'):
@@ -104,7 +101,12 @@ class Cadastral(Source):
             if element.text and element.text.strip():
                 value = element.text.strip()
                 
-                if value.lower() in ('true', 'false'):
+                # Special handling for different field types
+                if field_name == 'BFEnummer' and value.isdigit():
+                    value = int(value)  # BFEnummer should be integer
+                elif field_name == 'senesteSagLokalId':
+                    value = str(value)  # Ensure latest_case_id stays as string
+                elif value.lower() in ('true', 'false'):
                     value = value.lower() == 'true'
                 elif value.isdigit():
                     value = int(value)
@@ -400,6 +402,15 @@ class Cadastral(Source):
 
     async def _batch_insert(self, client, records):
         """Insert records in batches"""
+        query = """
+            INSERT INTO cadastral_properties (
+                bfe_number, business_event, business_process, latest_case_id,
+                id_namespace, id_local, registration_from, effect_from,
+                authority, is_worker_housing, is_common_lot, has_owner_apartments,
+                is_separated_road, agricultural_notation, geometry
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
+        """
+        
         batch_size = 2000
         total_records = len(records)
         records_synced = 0
@@ -407,35 +418,6 @@ class Cadastral(Source):
         logger.info(f"Starting database upload of {total_records:,} records...")
         for i in range(0, total_records, batch_size):
             batch = records[i:i + batch_size]
-            # Create the SQL query for batch upsert
-            query = """
-                INSERT INTO cadastral_properties (
-                    bfe_number, business_event, business_process, latest_case_id,
-                    id_namespace, id_local, registration_from, effect_from,
-                    authority, is_worker_housing, is_common_lot, has_owner_apartments,
-                    is_separated_road, agricultural_notation, geometry
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
-                ON CONFLICT (bfe_number) DO UPDATE SET
-                    business_event = EXCLUDED.business_event,
-                    business_process = EXCLUDED.business_process,
-                    latest_case_id = EXCLUDED.latest_case_id,
-                    id_namespace = EXCLUDED.id_namespace,
-                    id_local = EXCLUDED.id_local,
-                    registration_from = EXCLUDED.registration_from,
-                    effect_from = EXCLUDED.effect_from,
-                    authority = EXCLUDED.authority,
-                    is_worker_housing = EXCLUDED.is_worker_housing,
-                    is_common_lot = EXCLUDED.is_common_lot,
-                    has_owner_apartments = EXCLUDED.has_owner_apartments,
-                    is_separated_road = EXCLUDED.is_separated_road,
-                    agricultural_notation = EXCLUDED.agricultural_notation,
-                    geometry = ST_GeomFromText(EXCLUDED.geometry, 25832)
-            """
-            # Add debug logging before the batch insert
-            logger.info(f"Sample record types: {[type(r['bfe_number']) for r in batch[:1]]}")
-            logger.info(f"Sample values: {batch[0]}")  # First record only
-
-            # Execute batch upsert
             await client.executemany(query, [
                 (
                     r['bfe_number'], r['business_event'], r['business_process'],
@@ -446,4 +428,5 @@ class Cadastral(Source):
                 ) for r in batch
             ])
             records_synced += len(batch)
-            logger.info(f"Synced {records_synced:,} of {total_records:,} records")
+            if records_synced % 10000 == 0:
+                logger.info(f"Synced {records_synced:,} of {total_records:,} records")
