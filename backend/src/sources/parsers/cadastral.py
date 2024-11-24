@@ -341,7 +341,7 @@ class Cadastral(Source):
                 'business_process': clean_value(row['forretningsproces']),
                 'latest_case_id': clean_value(row['senesteSagLokalId']),
                 'id_namespace': clean_value(row['id.namespace']),
-                'id_local': clean_value(row['id.lokalId']),
+                'id_local': str(clean_value(row['id.lokalId'])),
                 'registration_from': clean_value(row['registreringFra']),
                 'effect_from': clean_value(row['virkningFra']),
                 'authority': clean_value(row['virkningsaktoer']),
