@@ -1,28 +1,32 @@
 # Build stage
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0 as builder
 
-# Install Python and build dependencies
+# Install Python and build dependencies in a single layer
 RUN apt-get update && apt-get install -y \
     python3.12 \
     python3.12-dev \
     python3-pip \
     gcc \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir pip --upgrade
 
 # Install dependencies
 WORKDIR /install
 COPY requirements.txt .
-RUN pip3 install --prefix=/install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Final stage
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0
 
-# Install Python runtime
+# Install Python runtime and required packages in a single layer
 RUN apt-get update && apt-get install -y \
     python3.12 \
+    python3.12-dev \
     python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+    gcc \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir pip --upgrade
 
 # Copy Python packages from builder
 COPY --from=builder /install /usr/local
