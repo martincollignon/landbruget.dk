@@ -309,6 +309,7 @@ class Cadastral(Source):
         async def db_worker():
             try:
                 total_synced = 0
+                batch_number = 0
                 
                 while True:
                     if db_queue.empty() and processing_complete.is_set():
@@ -316,13 +317,24 @@ class Cadastral(Source):
                     
                     try:
                         records = await asyncio.wait_for(db_queue.get(), timeout=1.0)
+                        batch_number += 1
                         async with client.transaction():
                             await self._batch_insert(client, records)
+                            await client.execute('COMMIT')  # Explicitly commit
                         total_synced += len(records)
-                        logger.info(f"Synced {total_synced:,} records to database")
+                        logger.info(f"Batch {batch_number}: Synced {len(records)} records. Total: {total_synced:,}")
                         db_queue.task_done()
                     except asyncio.TimeoutError:
                         continue
+                    except Exception as e:
+                        logger.error(f"Error in batch {batch_number}: {str(e)}")
+                        raise
+                
+                # Verify final count
+                final_count = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
+                logger.info(f"Final database count: {final_count:,}")
+                if final_count != total_synced:
+                    logger.error(f"Count mismatch! Reported: {total_synced:,}, Actual: {final_count:,}")
                 
                 return total_synced
             except Exception as e:
