@@ -6,6 +6,8 @@ on:
     paths:
       - 'backend/**'
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
 
 env:
   PROJECT_ID: landbrugsdata-1
@@ -48,7 +50,8 @@ jobs:
           --cpu=2 \
           --memory=4Gi \
           --max-retries=3 \
-          --task-timeout=2h || \
+          --task-timeout=2h \
+          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db || \
         gcloud run jobs create $SERVICE_NAME \
           --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
           --region $REGION \
@@ -58,4 +61,11 @@ jobs:
           --cpu=2 \
           --memory=4Gi \
           --max-retries=3 \
-          --task-timeout=2h
+          --task-timeout=2h \
+          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
+
+    - name: Execute Cloud Run Job
+      run: |
+        gcloud run jobs execute $SERVICE_NAME \
+          --region $REGION \
+          --wait
