@@ -34,8 +34,7 @@ class Cadastral(Source):
         connector = aiohttp.TCPConnector(limit=self.max_concurrent)
         timeout = aiohttp.ClientTimeout(total=300)  # 5 minute timeout
         return aiohttp.ClientSession(
-            auth=aiohttp.BasicAuth(self.username, self.password),
-            headers={'User-Agent': 'Mozilla/5.0'},
+            headers={'User-Agent': 'Mozilla/5.0 QGIS/33603/macOS 15.1'},
             connector=connector,
             timeout=timeout
         )
@@ -43,6 +42,8 @@ class Cadastral(Source):
     def _get_params(self, start_index=0, max_features=None):
         """Get WFS request parameters"""
         params = {
+            'username': self.username,
+            'password': self.password,
             'SERVICE': 'WFS',
             'REQUEST': 'GetFeature',
             'VERSION': '1.1.0',
