@@ -10,8 +10,13 @@ import pandas as pd
 from dotenv import load_dotenv
 from shapely.geometry import Polygon, MultiPolygon
 import asyncpg
+import logging
 
 from ...base import Source, clean_value
+
+# At the start of the file, set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Cadastral(Source):
     def __init__(self, config):
@@ -122,8 +127,10 @@ class Cadastral(Source):
         params = self._get_params(start_index, self.page_size)
         features = []
         
+        logger.info(f"Fetching chunk starting at index {start_index}")
         async with session.get(self.config['url'], params=params) as response:
             response.raise_for_status()
+            logger.info(f"Received response for chunk {start_index}")
             
             parser = ET.XMLPullParser(['end'])
             chunk_size = 8192
@@ -139,6 +146,7 @@ class Cadastral(Source):
                         features.append(feature)
                         elem.clear()
         
+        logger.info(f"Processed {len(features)} features from chunk {start_index}")
         return features
 
     async def _fetch_chunk_with_retry(self, session, start_index, max_retries=3):
@@ -154,10 +162,13 @@ class Cadastral(Source):
     
     async def fetch(self) -> pd.DataFrame:
         """Fetch cadastral data using parallel streaming requests"""
+        logger.info("Starting fetch process...")
+        
         all_features = []
         
         async with self._get_session() as session:
             # Get total count
+            logger.info("Getting total feature count...")
             count_params = self._get_params()
             count_params['resultType'] = 'hits'
             
@@ -170,11 +181,12 @@ class Cadastral(Source):
                 if total_features == 0:
                     raise ValueError("Could not determine total number of features")
                 
-            print(f"Total features to fetch: {total_features:,}")
+            logger.info(f"Found {total_features:,} total features")
             
             # Process in batches
             batch_size = self.page_size * self.max_concurrent
             for batch_start in range(0, total_features, batch_size):
+                logger.info(f"Processing batch starting at {batch_start:,}")
                 tasks = []
                 for offset in range(0, batch_size, self.page_size):
                     start_idx = batch_start + offset
@@ -182,13 +194,14 @@ class Cadastral(Source):
                         break
                     tasks.append(self._fetch_chunk_with_retry(session, start_idx))
                 
-                print(f"Fetching records {batch_start:,} to {min(batch_start + batch_size, total_features):,}...")
+                logger.info(f"Fetching records {batch_start:,} to {min(batch_start + batch_size, total_features):,}...")
                 batch_results = await asyncio.gather(*tasks)
                 
                 for features in batch_results:
                     all_features.extend(features)
-                    print(f"Total features collected: {len(all_features):,}")
+                    logger.info(f"Total features collected: {len(all_features):,}")
         
+        logger.info("Fetch process completed")
         print(f"\nConverting {len(all_features):,} features to GeoDataFrame...")
         gdf = gpd.GeoDataFrame.from_features(all_features)
         gdf.set_crs(epsg=25832, inplace=True)
@@ -196,9 +209,10 @@ class Cadastral(Source):
 
     async def sync(self, client):
         """Sync cadastral data to PostgreSQL database"""
-        print("Starting cadastral sync...")
+        logger.info("Starting cadastral sync...")
         
         try:
+            logger.info("Creating/verifying database tables...")
             # Create table outside main transaction
             await client.execute("""
                 CREATE TABLE IF NOT EXISTS cadastral_properties (
@@ -224,16 +238,16 @@ class Cadastral(Source):
             """)
             
             # Fetch data and prepare for insert
-            print("Fetching data...")
+            logger.info("Fetching data...")
             gdf = await self.fetch()
             
             # Use transaction for the data upload
             async with client.transaction():
                 # 2. Fetch data
-                print("Fetching data...")
+                logger.info("Fetching data...")
                 gdf = await self.fetch()
                 
-                print("\nPreparing records...")
+                logger.info("\nPreparing records...")
                 records = []
                 with tqdm(total=len(gdf), 
                          desc="Converting records", 
@@ -264,7 +278,7 @@ class Cadastral(Source):
                 batch_size = 2000
                 total_records = len(records)
                 
-                print("\nUploading to database...")
+                logger.info("\nUploading to database...")
                 with tqdm(total=total_records, 
                          desc="Uploading records", 
                          unit="records",
@@ -308,12 +322,13 @@ class Cadastral(Source):
                         ])
                         pbar.update(len(batch))
                 
-                print("\nSync completed!")
+                logger.info("\nSync completed!")
+                logger.info(f"Successfully synced {total_records:,} records")
                 return total_records
 
         except asyncpg.PostgresError as e:
-            print(f"Database error during sync: {str(e)}")
+            logger.error(f"Database error during sync: {str(e)}", exc_info=True)
             raise
         except Exception as e:
-            print(f"Unexpected error during sync: {str(e)}")
+            logger.error(f"Unexpected error during sync: {str(e)}", exc_info=True)
             raise
