@@ -150,16 +150,24 @@ class Cadastral(Source):
         logger.info(f"Processed {len(features)} features from chunk {start_index}")
         return features
 
-    async def _fetch_chunk_with_retry(self, session, start_index, max_retries=3):
-        """Fetch chunk with retry logic"""
+    async def _fetch_chunk_with_retry(self, session, start_index, max_retries=3, initial_delay=1):
+        """Fetch chunk with exponential backoff retry"""
+        delay = initial_delay
+        last_exception = None
+        
         for attempt in range(max_retries):
             try:
                 return await self._fetch_chunk(session, start_index)
             except Exception as e:
-                if attempt == max_retries - 1:  # Last attempt
-                    raise
-                print(f"Retry {attempt + 1}/{max_retries} for chunk {start_index}: {str(e)}")
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                last_exception = e
+                if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                    logger.warning(f"Attempt {attempt + 1} failed for chunk {start_index}: {str(e)}. Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    logger.error(f"All {max_retries} attempts failed for chunk {start_index}")
+        
+        raise last_exception
     
     async def fetch(self) -> pd.DataFrame:
         """Fetch cadastral data using parallel streaming requests"""
@@ -386,47 +394,44 @@ class Cadastral(Source):
         """Insert records in batches"""
         batch_size = 2000
         total_records = len(records)
+        records_synced = 0
         
-        logger.info("\nUploading to database...")
-        with tqdm(total=total_records, 
-                 desc="Uploading records", 
-                 unit="records",
-                 unit_scale=True,
-                 miniters=1) as pbar:
-            for i in range(0, total_records, batch_size):
-                batch = records[i:i + batch_size]
-                # Create the SQL query for batch upsert
-                query = """
-                    INSERT INTO cadastral_properties (
-                        bfe_number, business_event, business_process, latest_case_id,
-                        id_namespace, id_local, registration_from, effect_from,
-                        authority, is_worker_housing, is_common_lot, has_owner_apartments,
-                        is_separated_road, agricultural_notation, geometry
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
-                    ON CONFLICT (bfe_number) DO UPDATE SET
-                        business_event = EXCLUDED.business_event,
-                        business_process = EXCLUDED.business_process,
-                        latest_case_id = EXCLUDED.latest_case_id,
-                        id_namespace = EXCLUDED.id_namespace,
-                        id_local = EXCLUDED.id_local,
-                        registration_from = EXCLUDED.registration_from,
-                        effect_from = EXCLUDED.effect_from,
-                        authority = EXCLUDED.authority,
-                        is_worker_housing = EXCLUDED.is_worker_housing,
-                        is_common_lot = EXCLUDED.is_common_lot,
-                        has_owner_apartments = EXCLUDED.has_owner_apartments,
-                        is_separated_road = EXCLUDED.is_separated_road,
-                        agricultural_notation = EXCLUDED.agricultural_notation,
-                        geometry = ST_GeomFromText(EXCLUDED.geometry, 25832)
-                """
-                # Execute batch upsert
-                await client.executemany(query, [
-                    (
-                        r['bfe_number'], r['business_event'], r['business_process'],
-                        r['latest_case_id'], r['id_namespace'], r['id_local'],
-                        r['registration_from'], r['effect_from'], r['authority'],
-                        r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
-                        r['is_separated_road'], r['agricultural_notation'], r['geometry']
-                    ) for r in batch
-                ])
-                pbar.update(len(batch))
+        logger.info(f"Starting database upload of {total_records:,} records...")
+        for i in range(0, total_records, batch_size):
+            batch = records[i:i + batch_size]
+            # Create the SQL query for batch upsert
+            query = """
+                INSERT INTO cadastral_properties (
+                    bfe_number, business_event, business_process, latest_case_id,
+                    id_namespace, id_local, registration_from, effect_from,
+                    authority, is_worker_housing, is_common_lot, has_owner_apartments,
+                    is_separated_road, agricultural_notation, geometry
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
+                ON CONFLICT (bfe_number) DO UPDATE SET
+                    business_event = EXCLUDED.business_event,
+                    business_process = EXCLUDED.business_process,
+                    latest_case_id = EXCLUDED.latest_case_id,
+                    id_namespace = EXCLUDED.id_namespace,
+                    id_local = EXCLUDED.id_local,
+                    registration_from = EXCLUDED.registration_from,
+                    effect_from = EXCLUDED.effect_from,
+                    authority = EXCLUDED.authority,
+                    is_worker_housing = EXCLUDED.is_worker_housing,
+                    is_common_lot = EXCLUDED.is_common_lot,
+                    has_owner_apartments = EXCLUDED.has_owner_apartments,
+                    is_separated_road = EXCLUDED.is_separated_road,
+                    agricultural_notation = EXCLUDED.agricultural_notation,
+                    geometry = ST_GeomFromText(EXCLUDED.geometry, 25832)
+            """
+            # Execute batch upsert
+            await client.executemany(query, [
+                (
+                    r['bfe_number'], r['business_event'], r['business_process'],
+                    r['latest_case_id'], r['id_namespace'], r['id_local'],
+                    r['registration_from'], r['effect_from'], r['authority'],
+                    r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
+                    r['is_separated_road'], r['agricultural_notation'], r['geometry']
+                ) for r in batch
+            ])
+            records_synced += len(batch)
+            logger.info(f"Synced {records_synced:,} of {total_records:,} records")
