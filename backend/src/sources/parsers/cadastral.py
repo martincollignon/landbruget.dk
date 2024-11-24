@@ -445,51 +445,71 @@ class Cadastral(Source):
 
     async def _batch_insert(self, client, records):
         """Insert records in batches with verification"""
-        # Get count and sample before
+        # Get count before
         count_before = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
         
         # Log the batch size
         logger.info(f"Processing batch of {len(records)} records")
         
-        # Do the insert with RETURNING clause
-        query = """
-            INSERT INTO cadastral_properties (
-                bfe_number, business_event, business_process, latest_case_id,
-                id_namespace, id_local, registration_from, effect_from,
-                authority, is_worker_housing, is_common_lot, has_owner_apartments,
-                is_separated_road, agricultural_notation, geometry
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
-            ON CONFLICT (bfe_number) DO UPDATE SET
-                business_event = EXCLUDED.business_event,
-                business_process = EXCLUDED.business_process,
-                latest_case_id = EXCLUDED.latest_case_id,
-                registration_from = EXCLUDED.registration_from,
-                effect_from = EXCLUDED.effect_from,
-                authority = EXCLUDED.authority,
-                is_worker_housing = EXCLUDED.is_worker_housing,
-                is_common_lot = EXCLUDED.is_common_lot,
-                has_owner_apartments = EXCLUDED.has_owner_apartments,
-                is_separated_road = EXCLUDED.is_separated_road,
-                agricultural_notation = EXCLUDED.agricultural_notation,
-                geometry = EXCLUDED.geometry
-            RETURNING bfe_number
-        """
-        
-        results = await client.executemany(query, [
-            (r['bfe_number'], r['business_event'], r['business_process'],
-             r['latest_case_id'], r['id_namespace'], r['id_local'],
-             r['registration_from'], r['effect_from'], r['authority'],
-             r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
-             r['is_separated_road'], r['agricultural_notation'], r['geometry'])
-            for r in records
-        ])
-        
-        # Get count after
-        count_after = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
-        
-        # Log detailed stats
-        logger.info(f"Batch stats:")
-        logger.info(f"  Records before: {count_before:,}")
-        logger.info(f"  Records after: {count_after:,}")
-        logger.info(f"  Net change: {count_after - count_before:,}")
-        logger.info(f"  Records processed: {len(records):,}")
+        try:
+            # Start a transaction
+            async with client.transaction():
+                # Do the insert with RETURNING clause
+                query = """
+                    INSERT INTO cadastral_properties (
+                        bfe_number, business_event, business_process, latest_case_id,
+                        id_namespace, id_local, registration_from, effect_from,
+                        authority, is_worker_housing, is_common_lot, has_owner_apartments,
+                        is_separated_road, agricultural_notation, geometry
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_GeomFromText($15, 25832))
+                    ON CONFLICT (bfe_number) DO UPDATE SET
+                        business_event = EXCLUDED.business_event,
+                        business_process = EXCLUDED.business_process,
+                        latest_case_id = EXCLUDED.latest_case_id,
+                        registration_from = EXCLUDED.registration_from,
+                        effect_from = EXCLUDED.effect_from,
+                        authority = EXCLUDED.authority,
+                        is_worker_housing = EXCLUDED.is_worker_housing,
+                        is_common_lot = EXCLUDED.is_common_lot,
+                        has_owner_apartments = EXCLUDED.has_owner_apartments,
+                        is_separated_road = EXCLUDED.is_separated_road,
+                        agricultural_notation = EXCLUDED.agricultural_notation,
+                        geometry = EXCLUDED.geometry
+                    WHERE EXCLUDED.registration_from >= cadastral_properties.registration_from 
+                        OR cadastral_properties.registration_from IS NULL
+                    RETURNING bfe_number
+                """
+                
+                results = await client.executemany(query, [
+                    (r['bfe_number'], r['business_event'], r['business_process'],
+                     r['latest_case_id'], r['id_namespace'], r['id_local'],
+                     r['registration_from'], r['effect_from'], r['authority'],
+                     r['is_worker_housing'], r['is_common_lot'], r['has_owner_apartments'],
+                     r['is_separated_road'], r['agricultural_notation'], r['geometry'])
+                    for r in records
+                ])
+                
+                # Verify the transaction
+                count_after = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
+                
+                # Sample verification
+                if len(records) > 0:
+                    sample_bfes = [r['bfe_number'] for r in records[:5]]
+                    verification = await client.fetch("""
+                        SELECT bfe_number, registration_from 
+                        FROM cadastral_properties 
+                        WHERE bfe_number = ANY($1)
+                    """, sample_bfes)
+                    logger.info(f"Sample records after insert: {verification}")
+                
+                logger.info(f"Batch stats:")
+                logger.info(f"  Records before: {count_before:,}")
+                logger.info(f"  Records after: {count_after:,}")
+                logger.info(f"  Net change: {count_after - count_before:,}")
+                logger.info(f"  Records processed: {len(records):,}")
+                
+                return count_after - count_before
+
+        except Exception as e:
+            logger.error(f"Error in batch insert: {str(e)}")
+            raise
