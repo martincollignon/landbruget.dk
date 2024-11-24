@@ -228,9 +228,10 @@ class Cadastral(Source):
         # Create database tables
         await self._create_tables(client)
         
-        # Create queues
+        # Create queues and tracking sets
         feature_queue = Queue(maxsize=self.max_concurrent * 2)
         db_queue = Queue(maxsize=self.batch_size * 2)
+        processed_chunks = set()  # Track processed chunks
         
         # Control flags
         fetch_complete = asyncio.Event()
@@ -245,15 +246,26 @@ class Cadastral(Source):
                     batch_size = self.page_size * self.max_concurrent
                     for batch_start in range(0, total_features, batch_size):
                         tasks = []
+                        chunk_indices = []  # Track indices in this batch
+                        
                         for offset in range(0, min(batch_size, total_features - batch_start), self.page_size):
                             start_idx = batch_start + offset
                             tasks.append(self._fetch_chunk_with_retry(session, start_idx))
+                            chunk_indices.append(start_idx)
                         
-                        batch_results = await asyncio.gather(*tasks)
-                        for features in batch_results:
-                            await feature_queue.put(features)
+                        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                        
+                        # Process results and track failures
+                        for idx, result in zip(chunk_indices, batch_results):
+                            if isinstance(result, Exception):
+                                logger.error(f"Failed to fetch chunk {idx}: {str(result)}")
+                                continue
                             
-                fetch_complete.set()
+                            await feature_queue.put((idx, result))  # Include chunk index
+                            logger.info(f"Queued chunk {idx} with {len(result)} features")
+                            
+                    fetch_complete.set()
+                    logger.info("Fetch process complete")
             except Exception as e:
                 logger.error(f"Fetch worker error: {str(e)}")
                 raise
@@ -270,9 +282,14 @@ class Cadastral(Source):
                         break
                     
                     try:
-                        features = await asyncio.wait_for(feature_queue.get(), timeout=1.0)
+                        chunk_idx, features = await asyncio.wait_for(feature_queue.get(), timeout=1.0)
+                        if chunk_idx in processed_chunks:
+                            logger.warning(f"Duplicate chunk detected: {chunk_idx}")
+                            continue
+                            
                         features_batch.extend(features)
                         records_processed += len(features)
+                        processed_chunks.add(chunk_idx)
                         
                         if len(features_batch) >= self.batch_size:
                             await self._process_features_batch(features_batch, db_queue)
@@ -284,6 +301,7 @@ class Cadastral(Source):
                         continue
                 
                 processing_complete.set()
+                logger.info(f"Processing complete. Processed chunks: {len(processed_chunks)}")
             except Exception as e:
                 logger.error(f"Process worker error: {str(e)}")
                 raise
