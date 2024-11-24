@@ -21,6 +21,10 @@ async def main():
     """Sync cadastral data to PostgreSQL"""
     load_dotenv()
     
+    # Add debug logging
+    logging.getLogger('src.sources.parsers.cadastral').setLevel(logging.DEBUG)
+    logging.getLogger('src.base').setLevel(logging.DEBUG)
+    
     db_host = os.getenv('DB_HOST')
     db_name = os.getenv('DB_NAME')
     db_user = os.getenv('DB_USER')
