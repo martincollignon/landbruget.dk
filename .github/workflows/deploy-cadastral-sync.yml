@@ -53,6 +53,10 @@ jobs:
           sleep 10
         done
 
+    - name: Enable Required APIs
+      run: |
+        gcloud services enable cloudscheduler.googleapis.com --project=$PROJECT_ID
+
     - name: Deploy Cloud Run Job
       run: |
         gcloud run jobs update $SERVICE_NAME \
