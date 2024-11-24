@@ -31,13 +31,9 @@ RUN apt-get update && apt-get install -y \
 # Copy Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Set environment variables
-ENV PORT=8080
-ENV HOST=0.0.0.0
-
 # Set working directory and copy application
 WORKDIR /app
 COPY . .
 
-# Use uvicorn to serve the FastAPI app
-CMD ["uvicorn", "sync_app:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the sync script directly
+CMD ["python", "sync_app.py"]
