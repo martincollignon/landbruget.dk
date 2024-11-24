@@ -1,21 +1,22 @@
-from fastapi import FastAPI
+import asyncio
+import logging
 from scripts.sync_cadastral import main as sync_cadastral
 
-app = FastAPI(
-    title="Cadastral Sync Service",
-    description="Service for syncing cadastral data"
-)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-@app.post("/")
 async def run_sync():
-    """Endpoint to trigger cadastral sync"""
+    """Run the cadastral sync process"""
+    logger.info("Starting cadastral sync...")
     try:
         await sync_cadastral()
-        return {"status": "success"}
+        logger.info("Sync completed successfully")
+        return True
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Sync failed: {str(e)}")
+        return False
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+if __name__ == "__main__":
+    success = asyncio.run(run_sync())
+    exit(0 if success else 1)
