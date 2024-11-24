@@ -37,11 +37,9 @@ class Cadastral(Source):
     def _get_session(self):
         """Create an HTTP session with connection pooling"""
         connector = aiohttp.TCPConnector(limit=self.max_concurrent)
-        timeout = aiohttp.ClientTimeout(total=300)  # 5 minute timeout
         return aiohttp.ClientSession(
             headers={'User-Agent': 'Mozilla/5.0 QGIS/33603/macOS 15.1'},
-            connector=connector,
-            timeout=timeout
+            connector=connector
         )
 
     def _get_params(self, start_index=0, max_features=None):
