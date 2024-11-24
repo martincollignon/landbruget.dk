@@ -1,18 +1,31 @@
 steps:
+  # Pull the previous images for layer caching
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['pull', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest']
+    continue-on-error: true
+
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build',
       '-t', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}',
       '-f', 'Dockerfile.sync',
       '--cache-from', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest',
+      '--build-arg', 'BUILDKIT_INLINE_CACHE=1',
       '.'
     ]
+    env:
+      - 'DOCKER_BUILDKIT=1'
+
   - name: 'gcr.io/cloud-builders/docker'
     args: ['tag', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}', 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest']
+
 images: 
   - 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}'
   - 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest'
+
 substitutions:
   _SERVICE_NAME: cadastral-sync
+
 options:
   machineType: 'E2_HIGHCPU_8'
+  dynamic_substitutions: true
