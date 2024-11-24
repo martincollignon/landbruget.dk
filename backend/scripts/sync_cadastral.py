@@ -5,9 +5,13 @@ import sys
 import asyncpg
 from dotenv import load_dotenv
 import logging
+from typing import Optional
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Add the backend directory to Python path
@@ -17,11 +21,11 @@ sys.path.append(str(backend_dir))
 from src.sources.parsers.cadastral import Cadastral
 from src.config import SOURCES
 
-async def main():
+async def main() -> Optional[int]:
     """Sync cadastral data to PostgreSQL"""
     load_dotenv()
     
-    # Add debug logging
+    # Configure logging levels
     logging.getLogger('src.sources.parsers.cadastral').setLevel(logging.INFO)
     logging.getLogger('src.base').setLevel(logging.INFO)
     
@@ -46,13 +50,15 @@ async def main():
         cadastral = Cadastral(SOURCES["cadastral"])
         total_synced = await cadastral.sync(conn)
         logger.info(f"Total records synced: {total_synced:,}")
+        return total_synced
         
     except Exception as e:
-        logger.error(f"Error connecting to database: {str(e)}")
+        logger.error(f"Error during sync: {str(e)}")
         raise
     finally:
         if conn:
             await conn.close()
+            logger.info("Database connection closed")
 
 if __name__ == "__main__":
     asyncio.run(main())

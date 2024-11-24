@@ -9,15 +9,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def run_sync():
+async def run_sync() -> bool:
     """Run the cadastral sync process"""
     logger.info("Starting cadastral sync...")
     try:
-        await sync_cadastral()
-        logger.info("Sync completed successfully")
+        total_synced = await sync_cadastral()
+        if total_synced is not None:
+            logger.info(f"Sync completed successfully. Total records: {total_synced:,}")
+        else:
+            logger.warning("Sync completed but no records were processed")
         return True
     except Exception as e:
-        logger.error(f"Sync failed: {str(e)}")
+        logger.error(f"Sync failed: {str(e)}", exc_info=True)
         return False
 
 if __name__ == "__main__":
