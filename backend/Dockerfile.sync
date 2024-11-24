@@ -1,6 +1,7 @@
-FROM python:3.9-slim
+# Build stage
+FROM python:3.9-slim as builder
 
-# Install system dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     gdal-bin \
     libgdal-dev \
@@ -12,19 +13,26 @@ RUN apt-get update && apt-get install -y \
 # Set GDAL environment variables
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
+
+# Install dependencies
+WORKDIR /install
+COPY requirements.txt .
+RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
+
+# Final stage
+FROM python:3.9-slim
+
+# Copy only runtime dependencies
+COPY --from=builder /install /usr/local
+COPY --from=builder /usr/bin/gdal* /usr/bin/
+COPY --from=builder /usr/lib/libgdal.so* /usr/lib/
+
+# Set environment variables
 ENV PORT=8080
 ENV HOST=0.0.0.0
 
-# Set working directory
+# Set working directory and copy application
 WORKDIR /app
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application
 COPY . .
 
 # Use uvicorn to serve the FastAPI app
