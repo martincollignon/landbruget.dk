@@ -91,6 +91,9 @@ class Cadastral(Source):
             'geometry': None
         }
         
+        # Add debug for raw XML values
+        logger.debug(f"Raw latest_case_id: {member.find('.//mat:senesteSagLokalId', namespaces).text}")
+        
         # Get all fields from the XML
         for element in member:
             if element.tag.endswith('geometri'):
@@ -325,9 +328,14 @@ class Cadastral(Source):
 
     async def _process_features_batch(self, features, db_queue):
         """Process a batch of features and queue for DB insertion"""
+        # Debug first feature before GeoDataFrame conversion
+        logger.debug(f"Feature before GDF: {features[0]['properties']}")
         gdf = gpd.GeoDataFrame.from_features(features)
-        gdf.set_crs(epsg=25832, inplace=True)
+        # Debug after GeoDataFrame conversion
+        logger.debug(f"GDF types: {gdf.dtypes}")
         records = self._prepare_records(gdf)
+        # Debug after prepare_records
+        logger.debug(f"Record types: {[(k, type(v)) for k,v in records[0].items()]}")
         await db_queue.put(records)
 
     def _prepare_records(self, gdf):
@@ -423,6 +431,10 @@ class Cadastral(Source):
                     agricultural_notation = EXCLUDED.agricultural_notation,
                     geometry = ST_GeomFromText(EXCLUDED.geometry, 25832)
             """
+            # Add debug logging before the batch insert
+            logger.info(f"Sample record types: {[type(r['bfe_number']) for r in batch[:1]]}")
+            logger.info(f"Sample values: {batch[0]}")  # First record only
+
             # Execute batch upsert
             await client.executemany(query, [
                 (
