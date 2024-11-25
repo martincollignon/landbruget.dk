@@ -18,6 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Set debug level for cadastral module
+logging.getLogger('src.sources.parsers.cadastral').setLevel(logging.DEBUG)
+
 # Add the backend directory to Python path
 backend_dir = Path(__file__).parent.parent
 sys.path.append(str(backend_dir))
