@@ -36,7 +36,8 @@ class Cadastral(Source):
         self.namespaces = {
             'wfs': 'http://www.opengis.net/wfs/2.0',
             'mat': 'http://data.gov.dk/schemas/matrikel/1',
-            'gml': 'http://www.opengis.net/gml/3.2'
+            'gml': 'http://www.opengis.net/gml/3.2',
+            'ogc': 'http://www.opengis.net/ogc'
         }
 
     def _get_session(self):
@@ -54,14 +55,12 @@ class Cadastral(Source):
             'password': self.password,
             'SERVICE': 'WFS',
             'REQUEST': 'GetFeature',
-            'VERSION': '1.1.0',
-            'TYPENAME': 'mat:SamletFastEjendom_Gaeldende',
+            'VERSION': '2.0.0',
+            'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
             'SRSNAME': 'EPSG:25832',
             'startIndex': str(start_index),
-            'NAMESPACE': 'xmlns(mat=http://data.gov.dk/schemas/matrikel/1)'
+            'count': str(max_features) if max_features else None
         }
-        if max_features:
-            params['maxFeatures'] = str(max_features)
         return params
 
     def _parse_geometry(self, geom, namespaces):
@@ -148,7 +147,8 @@ class Cadastral(Source):
                     break
                 parser.feed(chunk)
                 for event, elem in parser.read_events():
-                    if elem.tag.endswith('SamletFastEjendom_Gaeldende'):
+                    if any(elem.tag.endswith(tag) for tag in ('SamletFastEjendom_Gaeldende', 
+                                                             '{http://data.gov.dk/schemas/matrikel/1}SamletFastEjendom_Gaeldende')):
                         feature = self._parse_feature(elem, self.namespaces)
                         features.append(feature)
                         elem.clear()  # Clear element to free memory
@@ -441,7 +441,7 @@ class Cadastral(Source):
             response.raise_for_status()
             content = await response.text()
             root = ET.fromstring(content)
-            return int(root.get('numberMatched', '0'))
+            return int(root.get('numberMatched') or root.get('numberOfFeatures') or '0')
 
     async def _batch_insert(self, client, records):
         """Insert records in batches with verification"""
