@@ -14,6 +14,7 @@ import logging
 from collections import deque
 from asyncio import Queue
 from datetime import datetime
+from shapely.wkt import dumps as wkt_dumps
 
 from ...base import Source, clean_value
 
@@ -36,8 +37,7 @@ class Cadastral(Source):
         self.namespaces = {
             'wfs': 'http://www.opengis.net/wfs/2.0',
             'mat': 'http://data.gov.dk/schemas/matrikel/1',
-            'gml': 'http://www.opengis.net/gml/3.2',
-            'ogc': 'http://www.opengis.net/ogc'
+            'gml': 'http://www.opengis.net/gml/3.2'
         }
 
     def _get_session(self):
@@ -67,71 +67,116 @@ class Cadastral(Source):
             
         return params
 
-    def _parse_geometry(self, geom, namespaces):
-        """Parse geometry from XML"""
-        if geom.tag.endswith('Polygon'):
-            coords = []
-            for pos_list in geom.findall('.//gml:posList', namespaces):
-                points = [float(x) for x in pos_list.text.split()]
-                coords.append([[points[i], points[i+1]] for i in range(0, len(points), 2)])
-            return {'type': 'Polygon', 'coordinates': coords}
-            
-        elif geom.tag.endswith('MultiSurface'):
-            coords = []
-            for polygon in geom.findall('.//gml:Polygon', namespaces):
-                poly_coords = []
-                for pos_list in polygon.findall('.//gml:posList', namespaces):
-                    points = [float(x) for x in pos_list.text.split()]
-                    poly_coords.append([[points[i], points[i+1]] for i in range(0, len(points), 2)])
-                coords.append(poly_coords)
-            return {'type': 'MultiPolygon', 'coordinates': coords}
-            
-        return None
+    def _parse_geometry(self, geom_elem, namespaces):
+        """Parse GML geometry into WKT using Shapely"""
+        try:
+            # Extract all coordinate lists from the geometry
+            pos_lists = geom_elem.findall('.//gml:posList', namespaces)
+            if not pos_lists:
+                return None
+
+            polygons = []
+            for pos_list in pos_lists:
+                if not pos_list.text:
+                    continue
+
+                # Convert space-separated coordinates to float list
+                coords = [float(x) for x in pos_list.text.strip().split()]
+                
+                # Create coordinate pairs (ignoring Z coordinate)
+                # Using list comprehension for better performance
+                pairs = [(coords[i], coords[i+1]) 
+                        for i in range(0, len(coords), 3)]
+                
+                if len(pairs) < 4:  # Need at least 4 points for a valid polygon
+                    continue
+
+                # Close the ring if needed
+                if pairs[0] != pairs[-1]:
+                    pairs.append(pairs[0])
+
+                # Create and validate polygon
+                try:
+                    polygon = Polygon(pairs)
+                    if polygon.is_valid:
+                        polygons.append(polygon)
+                    else:
+                        logger.warning(f"Invalid polygon detected: {polygon.wkt[:100]}...")
+                except Exception as e:
+                    logger.warning(f"Error creating polygon: {str(e)}")
+                    continue
+
+            if not polygons:
+                return None
+
+            # Create appropriate geometry type and convert to WKT
+            if len(polygons) == 1:
+                return wkt_dumps(polygons[0])
+            else:
+                return wkt_dumps(MultiPolygon(polygons))
+
+        except Exception as e:
+            logger.error(f"Error parsing geometry: {str(e)}")
+            return None
 
     def _parse_feature(self, member, namespaces):
         """Parse a single feature from XML"""
-        feature = {
-            'type': 'Feature',
-            'properties': {},
-            'geometry': None
-        }
-        
-        # Get all fields from the XML
-        for element in member:
-            if element.tag.endswith('geometri'):
-                continue
-                
-            field_name = element.tag.split('}')[-1]
+        try:
+            # Map XML fields to database fields with their converters
+            field_mapping = {
+                'BFEnummer': ('bfe_number', int),
+                'forretningshaendelse': ('business_event', str),
+                'forretningsproces': ('business_process', str),
+                'senesteSagLokalId': ('latest_case_id', str),
+                'id.namespace': ('id_namespace', str),
+                'id.lokalId': ('id_local', str),
+                'registreringFra': ('registration_from', lambda x: datetime.fromisoformat(x.replace('Z', '+00:00'))),
+                'virkningFra': ('effect_from', lambda x: datetime.fromisoformat(x.replace('Z', '+00:00'))),
+                'virkningsaktoer': ('authority', str),
+                'arbejderbolig': ('is_worker_housing', lambda x: x.lower() == 'true'),
+                'erFaelleslod': ('is_common_lot', lambda x: x.lower() == 'true'),
+                'hovedejendomOpdeltIEjerlejligheder': ('has_owner_apartments', lambda x: x.lower() == 'true'),
+                'udskiltVej': ('is_separated_road', lambda x: x.lower() == 'true'),
+                'landbrugsnotering': ('agricultural_notation', str)
+            }
             
-            if element.text and element.text.strip():
-                value = element.text.strip()
-                
-                # Special handling for different field types
-                if field_name == 'BFEnummer' and value.isdigit():
-                    value = int(value)  # BFEnummer should be integer
-                elif field_name == 'senesteSagLokalId':
-                    value = str(value)  # Ensure latest_case_id stays as string
-                elif value.lower() in ('true', 'false'):
-                    value = value.lower() == 'true'
-                elif value.isdigit():
-                    value = int(value)
-                elif value.replace('.', '').isdigit() and '.' in value:
-                    value = float(value)
-                    
-                feature['properties'][field_name] = value
-        
-        # Parse geometry
-        geom_elem = member.find('mat:geometri', namespaces)
-        if geom_elem is not None:
-            multi_surface = geom_elem.find('.//gml:MultiSurface', namespaces)
-            if multi_surface is not None:
-                feature['geometry'] = self._parse_geometry(multi_surface, namespaces)
-            else:
-                polygon = geom_elem.find('.//gml:Polygon', namespaces)
-                if polygon is not None:
-                    feature['geometry'] = self._parse_geometry(polygon, namespaces)
+            record = {}
             
-        return feature
+            # Parse each field using the mapping
+            for xml_field, (db_field, converter) in field_mapping.items():
+                elem = member.find(f'mat:{xml_field}', namespaces)
+                if elem is not None and elem.text:
+                    try:
+                        value = elem.text.strip()
+                        record[db_field] = converter(value)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Error converting {xml_field} value '{value}': {str(e)}")
+                        continue
+            
+            # Parse geometry if present
+            geom_elem = member.find('.//mat:geometri/gml:MultiSurface', namespaces)
+            if geom_elem is not None:
+                geometry_wkt = self._parse_geometry(geom_elem, namespaces)
+                if geometry_wkt:
+                    record['geometry'] = geometry_wkt
+            
+            # Validate geometry if present
+            if 'geometry' in record:
+                geom = record['geometry']
+                if not geom.is_valid:
+                    logger.warning(f"Invalid geometry for BFE {record.get('BFEnummer')}, attempting to fix...")
+                    geom = geom.buffer(0)  # Common fix for invalid geometries
+                    if geom.is_valid:
+                        record['geometry'] = geom
+                    else:
+                        logger.error(f"Could not fix geometry for BFE {record.get('BFEnummer')}")
+                        del record['geometry']
+            
+            return record
+                
+        except Exception as e:
+            logger.error(f"Error parsing feature: {str(e)}")
+            return None
 
     async def _fetch_chunk(self, session, start_index):
         """Fetch and parse a chunk of features using streaming"""
@@ -391,24 +436,39 @@ class Cadastral(Source):
 
         records = []
         for _, row in gdf.iterrows():
-            record = {
-                'bfe_number': clean_field(row['BFEnummer']),
-                'business_event': clean_field(row['forretningshaendelse']),
-                'business_process': clean_field(row['forretningsproces']),
-                'latest_case_id': clean_field(row['senesteSagLokalId']),
-                'id_namespace': clean_field(row['id.namespace']),
-                'id_local': str(clean_field(row['id.lokalId'])),
-                'registration_from': parse_datetime(clean_field(row['registreringFra'])),
-                'effect_from': parse_datetime(clean_field(row['virkningFra'])),
-                'authority': clean_field(row['virkningsaktoer']),
-                'is_worker_housing': clean_field(row['arbejderbolig']),
-                'is_common_lot': clean_field(row['erFaelleslod']),
-                'has_owner_apartments': clean_field(row['hovedejendomOpdeltIEjerlejligheder']),
-                'is_separated_road': clean_field(row['udskiltVej']),
-                'agricultural_notation': clean_field(row['landbrugsnotering']),
-                'geometry': row['geometry'].wkt if 'geometry' in row else None
-            }
-            records.append(record)
+            try:
+                geom = row['geometry']
+                if geom is not None:
+                    if not geom.is_valid:
+                        geom = geom.buffer(0)
+                        if not geom.is_valid:
+                            logger.warning(f"Invalid geometry for BFE {row['BFEnummer']}, skipping geometry")
+                            geom = None
+                    wkt = geom.wkt if geom else None
+                else:
+                    wkt = None
+                
+                record = {
+                    'bfe_number': clean_field(row['BFEnummer']),
+                    'business_event': clean_field(row['forretningshaendelse']),
+                    'business_process': clean_field(row['forretningsproces']),
+                    'latest_case_id': clean_field(row['senesteSagLokalId']),
+                    'id_namespace': clean_field(row['id.namespace']),
+                    'id_local': str(clean_field(row['id.lokalId'])),
+                    'registration_from': parse_datetime(clean_field(row['registreringFra'])),
+                    'effect_from': parse_datetime(clean_field(row['virkningFra'])),
+                    'authority': clean_field(row['virkningsaktoer']),
+                    'is_worker_housing': clean_field(row['arbejderbolig']),
+                    'is_common_lot': clean_field(row['erFaelleslod']),
+                    'has_owner_apartments': clean_field(row['hovedejendomOpdeltIEjerlejligheder']),
+                    'is_separated_road': clean_field(row['udskiltVej']),
+                    'agricultural_notation': clean_field(row['landbrugsnotering']),
+                    'geometry': wkt
+                }
+                records.append(record)
+            except Exception as e:
+                logger.error(f"Error preparing record for BFE {row.get('BFEnummer')}: {str(e)}")
+                continue
         return records
 
     async def _create_tables(self, client):
