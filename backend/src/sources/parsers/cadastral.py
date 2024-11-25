@@ -42,7 +42,7 @@ class Cadastral(Source):
         if not self.username or not self.password:
             raise ValueError("Missing DATAFORDELER_USERNAME or DATAFORDELER_PASSWORD")
         
-        self.page_size = int(os.getenv('CADASTRAL_PAGE_SIZE', '10000'))
+        self.page_size = int(os.getenv('CADASTRAL_PAGE_SIZE', '1000'))
         self.batch_size = int(os.getenv('CADASTRAL_BATCH_SIZE', '5000'))
         self.max_concurrent = int(os.getenv('CADASTRAL_MAX_CONCURRENT', '5'))
         self.request_timeout = int(os.getenv('CADASTRAL_REQUEST_TIMEOUT', '300'))
@@ -388,16 +388,15 @@ class Cadastral(Source):
         async def fetch_worker():
             """Fetch features from WFS service"""
             try:
-                # Use total timeout for the session
                 async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
-                    # Get total count
+                    # Get total count first (this will now return 2.1M+)
                     total_features = await self._get_total_count(session)
                     logger.info(f"Found {total_features:,} total features")
 
                     # Create progress bar
                     pbar = tqdm(total=total_features, desc="Fetching features")
                     
-                    # Process chunks
+                    # Process all chunks
                     tasks = []
                     for start_index in range(0, total_features, self.page_size):
                         task = asyncio.create_task(
@@ -409,8 +408,9 @@ class Cadastral(Source):
                     for start_index, task in tasks:
                         try:
                             features = await task
-                            await feature_queue.put((start_index, features))
-                            pbar.update(len(features))
+                            if features:  # Only process if we got features
+                                await feature_queue.put((start_index, features))
+                                pbar.update(len(features))
                         except Exception as e:
                             logger.error(f"Error fetching chunk {start_index}: {str(e)}")
                             continue
