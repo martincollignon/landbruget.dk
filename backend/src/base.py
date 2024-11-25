@@ -15,15 +15,13 @@ def clean_value(value):
 class Source(ABC):
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.batch_size: int = config.get('batch_size', 1000)
-        self.max_concurrent: int = config.get('max_concurrent', 10)
 
     @abstractmethod
-    async def fetch(self) -> pd.DataFrame:
-        """Fetch data from source and return as DataFrame"""
+    async def fetch(self):
+        """Fetch data from source"""
         pass
 
     @abstractmethod
-    async def sync(self, client) -> int:
-        """Sync data to database, returns number of records synced"""
+    async def sync(self, client) -> Optional[int]:
+        """Sync data to database, returns number of records synced or None on failure"""
         pass

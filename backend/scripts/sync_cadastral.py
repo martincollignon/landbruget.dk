@@ -6,11 +6,15 @@ import asyncpg
 from dotenv import load_dotenv
 import logging
 from typing import Optional
+import signal
 
-# Configure logging
+# Configure logging for Cloud Run
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # Cloud Run logs to stdout
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,16 @@ sys.path.append(str(backend_dir))
 from src.sources.parsers.cadastral import Cadastral
 from src.config import SOURCES
 
+# Add graceful shutdown
+shutdown = asyncio.Event()
+
+def handle_shutdown(signum, frame):
+    logger.info(f"Received signal {signum}. Starting graceful shutdown...")
+    shutdown.set()
+
+signal.signal(signal.SIGTERM, handle_shutdown)
+signal.signal(signal.SIGINT, handle_shutdown)
+
 async def main() -> Optional[int]:
     """Sync cadastral data to PostgreSQL"""
     load_dotenv()
@@ -29,22 +43,25 @@ async def main() -> Optional[int]:
     logging.getLogger('src.sources.parsers.cadastral').setLevel(logging.INFO)
     logging.getLogger('src.base').setLevel(logging.INFO)
     
-    db_host = os.getenv('DB_HOST')
-    db_name = os.getenv('DB_NAME')
-    db_user = os.getenv('DB_USER')
-    db_password = os.getenv('DB_PASSWORD')
+    # Get database configuration from environment
+    db_config = {
+        'host': os.getenv('DB_HOST'),
+        'database': os.getenv('DB_NAME'),
+        'user': os.getenv('DB_USER'),
+        'password': os.getenv('DB_PASSWORD'),
+        'port': int(os.getenv('DB_PORT', '5432')),
+        'ssl': os.getenv('DB_SSL', 'require'),  # Add SSL for Cloud SQL
+        'command_timeout': 60  # Add command timeout
+    }
     
-    if not all([db_host, db_name, db_user, db_password]):
+    if not all([db_config['host'], db_config['database'], 
+                db_config['user'], db_config['password']]):
         raise ValueError("Missing database configuration")
     
     conn = None
     try:
-        conn = await asyncpg.connect(
-            host=db_host,
-            database=db_name,
-            user=db_user,
-            password=db_password
-        )
+        # Connect with SSL and timeout
+        conn = await asyncpg.connect(**db_config)
         logger.info("Database connection established")
         
         cadastral = Cadastral(SOURCES["cadastral"])
@@ -61,4 +78,10 @@ async def main() -> Optional[int]:
             logger.info("Database connection closed")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Received keyboard interrupt. Shutting down...")
+    except Exception as e:
+        logger.error(f"Unhandled exception: {str(e)}")
+        sys.exit(1)
