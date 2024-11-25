@@ -158,18 +158,34 @@ class Cadastral(Source):
 
     async def _get_total_count(self, session):
         """Get total number of features"""
-        params = self._get_base_params()  # Use base params without count
-        params['resultType'] = 'hits'
+        # Use same parameters as the test script
+        params = {
+            'username': self.username,
+            'password': self.password,
+            'SERVICE': 'WFS',
+            'REQUEST': 'GetFeature',
+            'VERSION': '2.0.0',
+            'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
+            'SRSNAME': 'EPSG:25832',
+            'resultType': 'hits'  # This is crucial for getting true count
+        }
         
         try:
             async with session.get(self.config['url'], params=params) as response:
                 response.raise_for_status()
                 content = await response.text()
                 root = ET.fromstring(content)
+                
+                # Get numberMatched attribute
                 matches = root.get('numberMatched')
                 if matches:
-                    return int(matches)
+                    total = int(matches)
+                    logger.info(f"WFS service reports {total:,} total features")
+                    return total
+                    
+                logger.error("No numberMatched attribute found in response")
                 return 0
+                
         except Exception as e:
             logger.error(f"Error getting total count: {str(e)}")
             raise
