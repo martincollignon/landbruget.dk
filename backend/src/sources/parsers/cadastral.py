@@ -68,109 +68,106 @@ class Cadastral(Source):
         return params
 
     def _parse_geometry(self, geom_elem, namespaces):
-        """Parse GML geometry into WKT using Shapely"""
+        """Parse GML geometry directly to Shapely object and return WKT"""
         try:
-            # Extract all coordinate lists from the geometry
+            bfe = geom_elem.find('../mat:BFEnummer', namespaces)
+            bfe_number = bfe.text if bfe is not None else 'unknown'
+            
             pos_lists = geom_elem.findall('.//gml:posList', namespaces)
             if not pos_lists:
+                logger.warning(f"No posList elements found for BFE {bfe_number}")
                 return None
 
+            logger.info(f"Processing geometry for BFE {bfe_number} with {len(pos_lists)} polygon parts")
             polygons = []
-            for pos_list in pos_lists:
+            
+            for idx, pos_list in enumerate(pos_lists, 1):
                 if not pos_list.text:
+                    logger.warning(f"Empty coordinates in part {idx} for BFE {bfe_number}")
                     continue
 
-                # Convert space-separated coordinates to float list
-                coords = [float(x) for x in pos_list.text.strip().split()]
-                
-                # Create coordinate pairs (ignoring Z coordinate)
-                # Using list comprehension for better performance
-                pairs = [(coords[i], coords[i+1]) 
-                        for i in range(0, len(coords), 3)]
-                
-                if len(pairs) < 4:  # Need at least 4 points for a valid polygon
-                    continue
+                # Log coordinate parsing
+                try:
+                    coords = [float(x) for x in pos_list.text.strip().split()]
+                    pairs = [(coords[i], coords[i+1]) 
+                            for i in range(0, len(coords), 3)]
+                    
+                    logger.debug(f"BFE {bfe_number}, part {idx}: {len(pairs)} coordinate pairs")
+                    
+                    if len(pairs) < 4:
+                        logger.warning(f"Too few coordinates in part {idx} for BFE {bfe_number}: {len(pairs)} pairs")
+                        continue
 
-                # Close the ring if needed
-                if pairs[0] != pairs[-1]:
-                    pairs.append(pairs[0])
+                except ValueError as e:
+                    logger.error(f"Error parsing coordinates in part {idx} for BFE {bfe_number}: {str(e)}")
+                    continue
 
                 # Create and validate polygon
                 try:
                     polygon = Polygon(pairs)
+                    if not polygon.is_valid:
+                        logger.warning(f"Invalid polygon in part {idx} for BFE {bfe_number}, attempting to fix")
+                        polygon = polygon.buffer(0)  # Try to fix
+                    
                     if polygon.is_valid:
+                        logger.debug(f"Valid polygon created for part {idx} of BFE {bfe_number}")
                         polygons.append(polygon)
                     else:
-                        logger.warning(f"Invalid polygon detected: {polygon.wkt[:100]}...")
+                        logger.error(f"Could not fix invalid polygon in part {idx} for BFE {bfe_number}")
                 except Exception as e:
-                    logger.warning(f"Error creating polygon: {str(e)}")
+                    logger.error(f"Error creating polygon in part {idx} for BFE {bfe_number}: {str(e)}")
                     continue
 
             if not polygons:
+                logger.error(f"No valid polygons created for BFE {bfe_number}")
                 return None
 
-            # Create appropriate geometry type and convert to WKT
-            if len(polygons) == 1:
-                return wkt_dumps(polygons[0])
-            else:
-                return wkt_dumps(MultiPolygon(polygons))
+            # Create final geometry
+            try:
+                final_geom = MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
+                wkt = wkt_dumps(final_geom)
+                logger.info(f"Successfully created {'MultiPolygon' if len(polygons) > 1 else 'Polygon'} for BFE {bfe_number} with {len(polygons)} parts")
+                return wkt
+            except Exception as e:
+                logger.error(f"Error creating final geometry for BFE {bfe_number}: {str(e)}")
+                return None
 
         except Exception as e:
-            logger.error(f"Error parsing geometry: {str(e)}")
+            logger.error(f"Unexpected error in geometry parsing: {str(e)}")
             return None
 
     def _parse_feature(self, member, namespaces):
         """Parse a single feature from XML"""
         try:
-            # Map XML fields to database fields with their converters
-            field_mapping = {
-                'BFEnummer': ('bfe_number', int),
-                'forretningshaendelse': ('business_event', str),
-                'forretningsproces': ('business_process', str),
-                'senesteSagLokalId': ('latest_case_id', str),
-                'id.namespace': ('id_namespace', str),
-                'id.lokalId': ('id_local', str),
-                'registreringFra': ('registration_from', lambda x: datetime.fromisoformat(x.replace('Z', '+00:00'))),
-                'virkningFra': ('effect_from', lambda x: datetime.fromisoformat(x.replace('Z', '+00:00'))),
-                'virkningsaktoer': ('authority', str),
-                'arbejderbolig': ('is_worker_housing', lambda x: x.lower() == 'true'),
-                'erFaelleslod': ('is_common_lot', lambda x: x.lower() == 'true'),
-                'hovedejendomOpdeltIEjerlejligheder': ('has_owner_apartments', lambda x: x.lower() == 'true'),
-                'udskiltVej': ('is_separated_road', lambda x: x.lower() == 'true'),
-                'landbrugsnotering': ('agricultural_notation', str)
-            }
+            bfe_elem = member.find('mat:BFEnummer', namespaces)
+            bfe_number = bfe_elem.text if bfe_elem is not None else 'unknown'
+            logger.info(f"Parsing feature BFE {bfe_number}")
             
             record = {}
             
-            # Parse each field using the mapping
-            for xml_field, (db_field, converter) in field_mapping.items():
+            # Parse fields
+            for xml_field, (db_field, converter) in self.field_mapping.items():
                 elem = member.find(f'mat:{xml_field}', namespaces)
                 if elem is not None and elem.text:
                     try:
                         value = elem.text.strip()
                         record[db_field] = converter(value)
                     except (ValueError, TypeError) as e:
-                        logger.warning(f"Error converting {xml_field} value '{value}': {str(e)}")
+                        logger.warning(f"BFE {bfe_number}: Error converting {xml_field} value '{value}': {str(e)}")
                         continue
             
-            # Parse geometry if present
+            # Parse geometry
             geom_elem = member.find('.//mat:geometri/gml:MultiSurface', namespaces)
             if geom_elem is not None:
+                logger.info(f"Processing geometry for BFE {bfe_number}")
                 geometry_wkt = self._parse_geometry(geom_elem, namespaces)
                 if geometry_wkt:
                     record['geometry'] = geometry_wkt
-            
-            # Validate geometry if present
-            if 'geometry' in record:
-                geom = record['geometry']
-                if not geom.is_valid:
-                    logger.warning(f"Invalid geometry for BFE {record.get('BFEnummer')}, attempting to fix...")
-                    geom = geom.buffer(0)  # Common fix for invalid geometries
-                    if geom.is_valid:
-                        record['geometry'] = geom
-                    else:
-                        logger.error(f"Could not fix geometry for BFE {record.get('BFEnummer')}")
-                        del record['geometry']
+                    logger.debug(f"Geometry successfully parsed for BFE {bfe_number}")
+                else:
+                    logger.warning(f"No valid geometry created for BFE {bfe_number}")
+            else:
+                logger.warning(f"No geometry element found for BFE {bfe_number}")
             
             return record
                 
@@ -437,17 +434,7 @@ class Cadastral(Source):
         records = []
         for _, row in gdf.iterrows():
             try:
-                geom = row['geometry']
-                if geom is not None:
-                    if not geom.is_valid:
-                        geom = geom.buffer(0)
-                        if not geom.is_valid:
-                            logger.warning(f"Invalid geometry for BFE {row['BFEnummer']}, skipping geometry")
-                            geom = None
-                    wkt = geom.wkt if geom else None
-                else:
-                    wkt = None
-                
+                # The geometry is already WKT from _parse_geometry
                 record = {
                     'bfe_number': clean_field(row['BFEnummer']),
                     'business_event': clean_field(row['forretningshaendelse']),
@@ -463,7 +450,7 @@ class Cadastral(Source):
                     'has_owner_apartments': clean_field(row['hovedejendomOpdeltIEjerlejligheder']),
                     'is_separated_road': clean_field(row['udskiltVej']),
                     'agricultural_notation': clean_field(row['landbrugsnotering']),
-                    'geometry': wkt
+                    'geometry': row['geometry']  # Already WKT
                 }
                 records.append(record)
             except Exception as e:
@@ -509,14 +496,17 @@ class Cadastral(Source):
 
     async def _batch_insert(self, client, records):
         """Insert records in batches with verification"""
-        # Get count before
         count_before = await client.fetchval('SELECT COUNT(*) FROM cadastral_properties')
         
-        # Log the batch size
-        logger.info(f"Processing batch of {len(records)} records")
+        logger.info(f"Starting batch insert of {len(records)} records")
+        geometry_stats = {
+            'total': len(records),
+            'with_geometry': sum(1 for r in records if r.get('geometry')),
+            'without_geometry': sum(1 for r in records if not r.get('geometry'))
+        }
+        logger.info(f"Geometry statistics for batch: {geometry_stats}")
         
         try:
-            # Start a transaction
             async with client.transaction():
                 # Do the insert with RETURNING clause
                 query = """
@@ -566,11 +556,12 @@ class Cadastral(Source):
                     """, sample_bfes)
                     logger.info(f"Sample records after insert: {verification}")
                 
-                logger.info(f"Batch stats:")
+                logger.info(f"Batch insert complete:")
                 logger.info(f"  Records before: {count_before:,}")
                 logger.info(f"  Records after: {count_after:,}")
                 logger.info(f"  Net change: {count_after - count_before:,}")
-                logger.info(f"  Records processed: {len(records):,}")
+                logger.info(f"  Records with geometry: {geometry_stats['with_geometry']}")
+                logger.info(f"  Records without geometry: {geometry_stats['without_geometry']}")
                 
                 return count_after - count_before
 
