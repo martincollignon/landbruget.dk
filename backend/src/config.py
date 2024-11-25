@@ -20,7 +20,7 @@ SOURCES = {
         "name": "Danish Cadastral Properties",
         "type": "wfs",
         "description": "Current real estate property boundaries",
-        "url": "https://services.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWFS/1.0.0/Wfs",
+        "url": "https://wfs.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWFS/1.0.0/WFS",
         "frequency": "weekly",
         "enabled": True
     }
