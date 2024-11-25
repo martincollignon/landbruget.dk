@@ -525,3 +525,62 @@ class Cadastral(Source):
         except Exception as e:
             logger.error(f"Error in batch insert: {str(e)}")
             raise
+
+    async def _fetch_batch(self, session, start_index):
+        """Fetch a batch of features"""
+        params = {
+            'username': self.username,
+            'password': self.password,
+            'SERVICE': 'WFS',
+            'REQUEST': 'GetFeature',
+            'VERSION': '2.0.0',
+            'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
+            'SRSNAME': 'EPSG:25832',
+            'startIndex': start_index,
+            'count': self.batch_size
+        }
+
+        async with session.get(self.config['url'], params=params) as response:
+            response.raise_for_status()
+            content = await response.text()
+            root = ET.fromstring(content)
+            
+            # Get the actual total from numberMatched attribute
+            if start_index == 0:  # Only log total on first request
+                total_matched = root.get('numberMatched')
+                if total_matched:
+                    logger.info(f"Found {int(total_matched):,} total features")
+            
+            return root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces)
+
+    async def fetch(self) -> pd.DataFrame:
+        """Fetch all cadastral data"""
+        records = []
+        
+        async with aiohttp.ClientSession() as session:
+            start_index = 0
+            while True:
+                features = await self._fetch_batch(session, start_index)
+                if not features:
+                    break
+                    
+                for feature in features:
+                    record = {}
+                    for xml_field, (db_field, converter) in self.field_mapping.items():
+                        elem = feature.find(f'mat:{xml_field}', self.namespaces)
+                        if elem is not None and elem.text:
+                            try:
+                                value = clean_value(elem.text)
+                                if value is not None:
+                                    record[db_field] = converter(value)
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Error converting field {xml_field}: {str(e)}")
+                                continue
+                    
+                    if record:
+                        records.append(record)
+                
+                start_index += len(features)
+                
+            logger.info("Fetch process complete")
+            return pd.DataFrame(records)
