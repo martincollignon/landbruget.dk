@@ -158,7 +158,6 @@ class Cadastral(Source):
 
     async def _get_total_count(self, session):
         """Get total number of features"""
-        # Use same parameters as the test script
         params = {
             'username': self.username,
             'password': self.password,
@@ -167,61 +166,57 @@ class Cadastral(Source):
             'VERSION': '2.0.0',
             'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
             'SRSNAME': 'EPSG:25832',
-            'resultType': 'hits'  # This is crucial for getting true count
+            'resultType': 'hits'
         }
         
         try:
             async with session.get(self.config['url'], params=params) as response:
                 response.raise_for_status()
-                content = await response.text()
-                root = ET.fromstring(content)
-                
-                # Get numberMatched attribute
-                matches = root.get('numberMatched')
-                if matches:
-                    total = int(matches)
-                    logger.info(f"WFS service reports {total:,} total features")
-                    return total
-                    
-                logger.error("No numberMatched attribute found in response")
-                return 0
+                text = await response.text()
+                root = ET.fromstring(text)
+                total_available = int(root.get('numberMatched', '0'))
+                logger.info(f"Total available features: {total_available:,}")
+                return total_available
                 
         except Exception as e:
             logger.error(f"Error getting total count: {str(e)}")
             raise
 
     async def _fetch_chunk(self, session, start_index, timeout=None):
-        """Fetch a chunk of features with retry logic"""
-        params = self._get_params(start_index)
-        delay = 1
-        retries = 3
+        """Fetch a chunk of features"""
+        params = {
+            'username': self.username,
+            'password': self.password,
+            'SERVICE': 'WFS',
+            'REQUEST': 'GetFeature',
+            'VERSION': '2.0.0',
+            'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
+            'SRSNAME': 'EPSG:25832',
+            'startIndex': str(start_index),
+            'count': str(self.page_size)
+        }
         
-        for attempt in range(retries):
-            try:
-                async with session.get(
-                    self.config['url'], 
-                    params=params,
-                    timeout=timeout or self.request_timeout_config
-                ) as response:
-                    response.raise_for_status()
-                    content = await response.text()
-                    root = ET.fromstring(content)
-                    
-                    features = []
-                    for feature_elem in root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces):
-                        feature = self._parse_feature(feature_elem)
-                        if feature:
-                            features.append(feature)
-                    
-                    return features
-                    
-            except Exception as e:
-                if attempt == retries - 1:
-                    logger.error(f"Failed to fetch chunk at index {start_index}: {str(e)}")
-                    raise
-                logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
-                delay *= 2
+        try:
+            async with session.get(
+                self.config['url'], 
+                params=params,
+                timeout=timeout or self.request_timeout_config
+            ) as response:
+                response.raise_for_status()
+                content = await response.text()
+                root = ET.fromstring(content)
+                
+                features = []
+                for feature_elem in root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces):
+                    feature = self._parse_feature(feature_elem)
+                    if feature:
+                        features.append(feature)
+                
+                return features
+                
+        except Exception as e:
+            logger.error(f"Error fetching chunk at index {start_index}: {str(e)}")
+            raise
 
     async def _create_tables(self, conn):
         """Create necessary database tables"""
