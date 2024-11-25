@@ -68,8 +68,8 @@ class Cadastral(Source):
             'gml': 'http://www.opengis.net/gml/3.2'
         }
 
-    def _get_params(self, start_index=0):
-        """Get WFS request parameters"""
+    def _get_base_params(self):
+        """Get base WFS request parameters without pagination"""
         return {
             'username': self.username,
             'password': self.password,
@@ -77,10 +77,17 @@ class Cadastral(Source):
             'REQUEST': 'GetFeature',
             'VERSION': '2.0.0',
             'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
-            'SRSNAME': 'EPSG:25832',
+            'SRSNAME': 'EPSG:25832'
+        }
+
+    def _get_params(self, start_index=0):
+        """Get WFS request parameters with pagination"""
+        params = self._get_base_params()
+        params.update({
             'startIndex': str(start_index),
             'count': str(self.page_size)
-        }
+        })
+        return params
 
     def _parse_geometry(self, geom_elem):
         """Parse GML geometry to WKT"""
@@ -151,14 +158,21 @@ class Cadastral(Source):
 
     async def _get_total_count(self, session):
         """Get total number of features"""
-        params = self._get_params()
+        params = self._get_base_params()  # Use base params without count
         params['resultType'] = 'hits'
         
-        async with session.get(self.config['url'], params=params) as response:
-            response.raise_for_status()
-            content = await response.text()
-            root = ET.fromstring(content)
-            return int(root.get('numberMatched', '0'))
+        try:
+            async with session.get(self.config['url'], params=params) as response:
+                response.raise_for_status()
+                content = await response.text()
+                root = ET.fromstring(content)
+                matches = root.get('numberMatched')
+                if matches:
+                    return int(matches)
+                return 0
+        except Exception as e:
+            logger.error(f"Error getting total count: {str(e)}")
+            raise
 
     async def _fetch_chunk(self, session, start_index, timeout=None):
         """Fetch a chunk of features with retry logic"""
