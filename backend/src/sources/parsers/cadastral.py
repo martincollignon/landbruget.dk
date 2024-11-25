@@ -23,6 +23,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Cadastral(Source):
+    # Define field mapping as a class attribute so it's always available
+    field_mapping = {
+        'BFEnummer': ('bfe_number', int),
+        'forretningshaendelse': ('business_event', str),
+        'forretningsproces': ('business_process', str),
+        'senesteSagLokalId': ('latest_case_id', str),
+        'id_lokalId': ('id_local', str),
+        'id_namespace': ('id_namespace', str),
+        'registreringFra': ('registration_from', lambda x: datetime.fromisoformat(x.replace('Z', '+00:00'))),
+        'virkningFra': ('effect_from', lambda x: datetime.fromisoformat(x.replace('Z', '+00:00'))),
+        'virkningsaktoer': ('authority', str),
+        'arbejderbolig': ('is_worker_housing', lambda x: x.lower() == 'true'),
+        'erFaelleslod': ('is_common_lot', lambda x: x.lower() == 'true'),
+        'hovedejendomOpdeltIEjerlejligheder': ('has_owner_apartments', lambda x: x.lower() == 'true'),
+        'udskiltVej': ('is_separated_road', lambda x: x.lower() == 'true'),
+        'landbrugsnotering': ('agricultural_notation', str)
+    }
+
     def __init__(self, config):
         super().__init__(config)
         load_dotenv()
@@ -30,10 +48,12 @@ class Cadastral(Source):
         self.password = os.getenv('DATAFORDELER_PASSWORD')
         if not self.username or not self.password:
             raise ValueError("Missing DATAFORDELER_USERNAME or DATAFORDELER_PASSWORD environment variables")
+        
         self.page_size = 10000
-        self.max_concurrent = 10  # Reduced for Cloud Run
-        self.batch_size = 1000  # DB batch size
-        self.stream_chunk_size = 32768  # Increased from 8192 for better streaming performance
+        self.max_concurrent = 10
+        self.batch_size = 1000
+        self.stream_chunk_size = 32768
+        
         self.namespaces = {
             'wfs': 'http://www.opengis.net/wfs/2.0',
             'mat': 'http://data.gov.dk/schemas/matrikel/1',
