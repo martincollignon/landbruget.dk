@@ -11,6 +11,9 @@ import asyncpg
 from dotenv import load_dotenv
 from tqdm import tqdm
 import psutil
+import time
+import backoff
+from aiohttp import ClientError, ClientTimeout
 
 from ...base import Source, clean_value
 
@@ -47,6 +50,9 @@ class Cadastral(Source):
         self.max_concurrent = int(os.getenv('CADASTRAL_MAX_CONCURRENT', '5'))
         self.request_timeout = int(os.getenv('CADASTRAL_REQUEST_TIMEOUT', '300'))
         self.total_timeout = int(os.getenv('CADASTRAL_TOTAL_TIMEOUT', '7200'))
+        self.requests_per_second = int(os.getenv('CADASTRAL_REQUESTS_PER_SECOND', '2'))
+        self.last_request_time = {}
+        self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
         
         self.request_timeout_config = aiohttp.ClientTimeout(
             total=self.request_timeout,
@@ -184,48 +190,62 @@ class Cadastral(Source):
             logger.error(f"Error getting total count: {str(e)}")
             raise
 
+    async def _wait_for_rate_limit(self):
+        """Ensure we don't exceed requests_per_second"""
+        worker_id = id(asyncio.current_task())
+        if worker_id in self.last_request_time:
+            elapsed = time.time() - self.last_request_time[worker_id]
+            if elapsed < 1.0 / self.requests_per_second:
+                await asyncio.sleep(1.0 / self.requests_per_second - elapsed)
+        self.last_request_time[worker_id] = time.time()
+
+    @backoff.on_exception(
+        backoff.expo,
+        (ClientError, asyncio.TimeoutError),
+        max_tries=3,
+        max_time=60
+    )
     async def _fetch_chunk(self, session, start_index, timeout=None):
-        """Fetch a chunk of features"""
-        params = {
-            'username': self.username,
-            'password': self.password,
-            'SERVICE': 'WFS',
-            'REQUEST': 'GetFeature',
-            'VERSION': '2.0.0',
-            'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
-            'SRSNAME': 'EPSG:25832',
-            'startIndex': str(start_index),
-            'count': str(self.page_size)
-        }
-        
-        try:
-            logger.info(f"Fetching chunk at index {start_index}")
-            async with session.get(
-                self.config['url'], 
-                params=params,
-                timeout=timeout or self.request_timeout_config
-            ) as response:
-                response.raise_for_status()
-                content = await response.text()
-                root = ET.fromstring(content)
-                
-                # Log response metadata
-                number_matched = root.get('numberMatched', '0')
-                number_returned = root.get('numberReturned', '0')
-                logger.info(f"Chunk {start_index}: matched={number_matched}, returned={number_returned}")
-                
-                features = []
-                for feature_elem in root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces):
-                    feature = self._parse_feature(feature_elem)
-                    if feature:
-                        features.append(feature)
-                
-                logger.info(f"Chunk {start_index}: parsed {len(features)} valid features")
-                return features
-                
-        except Exception as e:
-            logger.error(f"Error fetching chunk at index {start_index}: {str(e)}")
-            raise
+        """Fetch a chunk of features with rate limiting and retries"""
+        async with self.request_semaphore:
+            await self._wait_for_rate_limit()
+            
+            params = self._get_params(start_index)
+            
+            try:
+                logger.info(f"Fetching chunk at index {start_index}")
+                async with session.get(
+                    self.config['url'], 
+                    params=params,
+                    timeout=timeout or self.request_timeout_config
+                ) as response:
+                    if response.status == 429:  # Too Many Requests
+                        retry_after = int(response.headers.get('Retry-After', 5))
+                        logger.warning(f"Rate limited, waiting {retry_after} seconds")
+                        await asyncio.sleep(retry_after)
+                        raise ClientError("Rate limited")
+                    
+                    response.raise_for_status()
+                    content = await response.text()
+                    root = ET.fromstring(content)
+                    
+                    # Log response metadata
+                    number_matched = root.get('numberMatched', '0')
+                    number_returned = root.get('numberReturned', '0')
+                    logger.info(f"Chunk {start_index}: matched={number_matched}, returned={number_returned}")
+                    
+                    features = []
+                    for feature_elem in root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces):
+                        feature = self._parse_feature(feature_elem)
+                        if feature:
+                            features.append(feature)
+                    
+                    logger.info(f"Chunk {start_index}: parsed {len(features)} valid features")
+                    return features
+                    
+            except Exception as e:
+                logger.error(f"Error fetching chunk at index {start_index}: {str(e)}")
+                raise
 
     async def _create_tables(self, conn):
         """Create necessary database tables"""

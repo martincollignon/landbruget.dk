@@ -7,13 +7,15 @@ pandas>=1.3.0
 geopandas>=0.9.0
 shapely>=1.7.0
 tqdm>=4.62.0
+psutil==5.9.7
+signal>=0.1.1
 
 # HTTP Client
 aiohttp>=3.8.0
 
 # Database
 postgrest
-
+backoff>=1.10.0
 # Data Validation
 pydantic>=1.8.0
 
