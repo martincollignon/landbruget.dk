@@ -42,10 +42,23 @@ class Cadastral(Source):
         if not self.username or not self.password:
             raise ValueError("Missing DATAFORDELER_USERNAME or DATAFORDELER_PASSWORD")
         
-        self.page_size = int(os.getenv('CADASTRAL_PAGE_SIZE', '1000'))
-        self.batch_size = int(os.getenv('CADASTRAL_BATCH_SIZE', '100'))
-        self.max_concurrent = int(os.getenv('CADASTRAL_MAX_CONCURRENT', '3'))
-        self.request_timeout = int(os.getenv('CADASTRAL_REQUEST_TIMEOUT', '30'))
+        self.page_size = int(os.getenv('CADASTRAL_PAGE_SIZE', '10000'))
+        self.batch_size = int(os.getenv('CADASTRAL_BATCH_SIZE', '5000'))
+        self.max_concurrent = int(os.getenv('CADASTRAL_MAX_CONCURRENT', '5'))
+        self.request_timeout = int(os.getenv('CADASTRAL_REQUEST_TIMEOUT', '300'))
+        self.total_timeout = int(os.getenv('CADASTRAL_TOTAL_TIMEOUT', '7200'))
+        
+        self.request_timeout_config = aiohttp.ClientTimeout(
+            total=self.request_timeout,
+            connect=60,
+            sock_read=300
+        )
+        
+        self.total_timeout_config = aiohttp.ClientTimeout(
+            total=self.total_timeout,
+            connect=60,
+            sock_read=300
+        )
         
         self.timeout = aiohttp.ClientTimeout(total=self.request_timeout)
         
@@ -147,17 +160,18 @@ class Cadastral(Source):
             root = ET.fromstring(content)
             return int(root.get('numberMatched', '0'))
 
-    async def _fetch_chunk(self, session, start_index, retries=3):
+    async def _fetch_chunk(self, session, start_index, timeout=None):
         """Fetch a chunk of features with retry logic"""
         params = self._get_params(start_index)
         delay = 1
+        retries = 3
         
         for attempt in range(retries):
             try:
                 async with session.get(
                     self.config['url'], 
                     params=params,
-                    timeout=self.timeout
+                    timeout=timeout or self.request_timeout_config
                 ) as response:
                     response.raise_for_status()
                     content = await response.text()
@@ -268,6 +282,7 @@ class Cadastral(Source):
     async def sync(self, conn):
         """Sync cadastral data"""
         logger.info("Starting cadastral sync...")
+        start_time = datetime.now()
         
         # Add memory monitoring
         import psutil
@@ -359,8 +374,8 @@ class Cadastral(Source):
         async def fetch_worker():
             """Fetch features from WFS service"""
             try:
-                timeout = aiohttp.ClientTimeout(total=self.request_timeout)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
+                # Use total timeout for the session
+                async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
                     # Get total count
                     total_features = await self._get_total_count(session)
                     logger.info(f"Found {total_features:,} total features")
@@ -409,6 +424,11 @@ class Cadastral(Source):
                 "SELECT COUNT(*) FROM cadastral_properties"
             )
             logger.info(f"Sync completed. Total records in database: {total_count:,}")
+            
+            # Log total runtime
+            end_time = datetime.now()
+            duration = end_time - start_time
+            logger.info(f"Total runtime: {duration}")
             
             return total_count
 
