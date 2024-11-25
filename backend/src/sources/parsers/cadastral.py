@@ -170,9 +170,11 @@ class Cadastral(Source):
         }
         
         try:
+            logger.info(f"Requesting total count with params: {params}")
             async with session.get(self.config['url'], params=params) as response:
                 response.raise_for_status()
                 text = await response.text()
+                logger.debug(f"Count response: {text[:500]}...")  # First 500 chars
                 root = ET.fromstring(text)
                 total_available = int(root.get('numberMatched', '0'))
                 logger.info(f"Total available features: {total_available:,}")
@@ -197,6 +199,7 @@ class Cadastral(Source):
         }
         
         try:
+            logger.info(f"Fetching chunk at index {start_index}")
             async with session.get(
                 self.config['url'], 
                 params=params,
@@ -206,12 +209,18 @@ class Cadastral(Source):
                 content = await response.text()
                 root = ET.fromstring(content)
                 
+                # Log response metadata
+                number_matched = root.get('numberMatched', '0')
+                number_returned = root.get('numberReturned', '0')
+                logger.info(f"Chunk {start_index}: matched={number_matched}, returned={number_returned}")
+                
                 features = []
                 for feature_elem in root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces):
                     feature = self._parse_feature(feature_elem)
                     if feature:
                         features.append(feature)
                 
+                logger.info(f"Chunk {start_index}: parsed {len(features)} valid features")
                 return features
                 
         except Exception as e:
