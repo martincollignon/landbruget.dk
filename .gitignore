@@ -62,3 +62,8 @@ yarn-error.log*
 .Trashes
 ehthumbs.db
 Thumbs.db
+cadastral_sync.log
+test_cadastral.log
+cloud-sql-proxy
+backend/test_wfs.py
+backend/tests/
