@@ -157,7 +157,7 @@ class Cadastral(Source):
             return None
 
     async def _get_total_count(self, session):
-        """Get total number of features"""
+        """Get total number of features from first page metadata"""
         params = {
             'username': self.username,
             'password': self.password,
@@ -166,15 +166,15 @@ class Cadastral(Source):
             'VERSION': '2.0.0',
             'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
             'SRSNAME': 'EPSG:25832',
-            'resultType': 'hits'
+            'startIndex': '0',
+            'count': '1'  # Just get one feature to check metadata
         }
         
         try:
-            logger.info(f"Requesting total count with params: {params}")
+            logger.info("Getting total count from first page metadata...")
             async with session.get(self.config['url'], params=params) as response:
                 response.raise_for_status()
                 text = await response.text()
-                logger.debug(f"Count response: {text[:500]}...")  # First 500 chars
                 root = ET.fromstring(text)
                 total_available = int(root.get('numberMatched', '0'))
                 logger.info(f"Total available features: {total_available:,}")
@@ -409,9 +409,26 @@ class Cadastral(Source):
             """Fetch features from WFS service"""
             try:
                 async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
-                    # Get total count first (this will now return 2.1M+)
-                    total_features = await self._get_total_count(session)
-                    logger.info(f"Found {total_features:,} total features")
+                    # Get total count using first page metadata
+                    params = {
+                        'username': self.username,
+                        'password': self.password,
+                        'SERVICE': 'WFS',
+                        'REQUEST': 'GetFeature',
+                        'VERSION': '2.0.0',
+                        'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
+                        'SRSNAME': 'EPSG:25832',
+                        'startIndex': '0',
+                        'count': '1'
+                    }
+                    
+                    logger.info("Getting total count from first page metadata...")
+                    async with session.get(self.config['url'], params=params) as response:
+                        response.raise_for_status()
+                        text = await response.text()
+                        root = ET.fromstring(text)
+                        total_features = int(root.get('numberMatched', '0'))
+                        logger.info(f"Total available features: {total_features:,}")
 
                     # Create progress bar
                     pbar = tqdm(total=total_features, desc="Fetching features")
