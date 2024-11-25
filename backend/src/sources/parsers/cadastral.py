@@ -50,6 +50,7 @@ class Cadastral(Source):
 
     def _get_params(self, start_index=0, max_features=None):
         """Get WFS request parameters"""
+        logger.info(f"Creating params with start_index={start_index}, max_features={max_features}, page_size={self.page_size}")
         params = {
             'username': self.username,
             'password': self.password,
@@ -58,9 +59,12 @@ class Cadastral(Source):
             'VERSION': '2.0.0',
             'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
             'SRSNAME': 'EPSG:25832',
-            'startIndex': str(start_index),
-            'count': str(max_features) if max_features else None
+            'startIndex': str(start_index)
         }
+        
+        if max_features is not None:
+            params['count'] = str(max_features)
+            
         return params
 
     def _parse_geometry(self, geom, namespaces):
