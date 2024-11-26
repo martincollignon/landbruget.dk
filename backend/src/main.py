@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 
 from .config import SOURCES
 from .sources.parsers.agricultural_fields import AgriculturalFields
-from .sources.static.wetlands.parser import Wetlands
+from .sources.parsers.wetlands import Wetlands
+from .sources.parsers.water_projects import WaterProjects
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +62,8 @@ async def get_data(source_id: str):
             source = AgriculturalFields(config)
         elif source_id == "wetlands":
             source = Wetlands(config)
+        elif source_id == "water_projects":
+            source = WaterProjects(config)
         else:
             raise HTTPException(status_code=501, detail="Source not implemented")
         
