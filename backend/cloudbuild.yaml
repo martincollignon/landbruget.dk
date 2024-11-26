@@ -1,5 +1,5 @@
 steps:
-  # Pull the previous images for layer caching (wrapped in shell to handle errors)
+  # Pull the previous images for layer caching
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args: 
@@ -26,7 +26,7 @@ images:
   - 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest'
 
 substitutions:
-  _SERVICE_NAME: cadastral-sync
+  _SERVICE_NAME: sync
 
 options:
   machineType: 'E2_HIGHCPU_8'
