@@ -39,25 +39,27 @@ jobs:
 
     - name: Deploy Cloud Run Job
       run: |
-        gcloud run jobs update $SERVICE_NAME \
+        # Try to update first, if it fails (doesn't exist), create it
+        if ! gcloud run jobs update $SERVICE_NAME \
           --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
           --region $REGION \
           --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
           --set-secrets=DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest \
           --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
-          --cpu=2 \
-          --memory=4Gi \
+          --cpu=4 \
+          --memory=8Gi \
           --max-retries=3 \
-          --task-timeout=2h \
-          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db || \
-        gcloud run jobs create $SERVICE_NAME \
-          --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
-          --region $REGION \
-          --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-          --set-secrets=DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest \
-          --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
-          --cpu=2 \
-          --memory=4Gi \
-          --max-retries=3 \
-          --task-timeout=2h \
-          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
+          --task-timeout=4h \
+          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db; then
+          gcloud run jobs create $SERVICE_NAME \
+            --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+            --region $REGION \
+            --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+            --set-secrets=DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest \
+            --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
+            --cpu=4 \
+            --memory=8Gi \
+            --max-retries=3 \
+            --task-timeout=4h \
+            --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
+        fi
