@@ -90,6 +90,9 @@ class WaterProjects(Source):
     def _parse_feature(self, feature, layer_name):
         """Parse a single feature into a dictionary"""
         try:
+            # Debug logging at start
+            logger.debug(f"Starting to parse feature for layer {layer_name}")
+            
             # Get the namespace from the feature's tag
             namespace = feature.tag.split('}')[0].strip('{')
             
@@ -99,37 +102,27 @@ class WaterProjects(Source):
                 geom_elem = feature.find(f'{{%s}}wkb_geometry' % namespace)
             
             if geom_elem is None:
-                logger.warning(f"Could not find geometry element in feature: {feature.tag}")
+                logger.warning(f"No geometry found in feature for layer {layer_name}")
+                return None
+
+            # Parse geometry and log result
+            geometry = self._parse_geometry(geom_elem)
+            if geometry is None:
+                logger.warning(f"Failed to parse geometry for layer {layer_name}")
                 return None
 
             # Extract base data
             data = {
                 'layer_name': layer_name,
-                'geometry': self._parse_geometry(geom_elem)
+                'geometry': geometry
             }
             
-            # Extract all other fields with proper case handling
-            for child in feature:
-                field_name = child.tag.split('}')[-1]
-                field_value = clean_value(child.text)
-                
-                if field_name.lower() != 'the_geom':
-                    # Handle all area field variations
-                    if field_name in ['AREAL_HA', 'IMK_areal', 'Areal_HA']:
-                        data['area_ha'] = field_value
-                    else:
-                        # Store all other fields in lowercase
-                        data[field_name.lower()] = field_value
-            
-            # Debug logging
-            logger.debug(f"Parsed fields: {list(data.keys())}")
-            logger.debug(f"Area value: {data.get('area_ha')}")
-            
+            # Log successful parse
+            logger.debug(f"Successfully parsed feature for layer {layer_name}")
             return data
+            
         except Exception as e:
-            logger.error(f"Error parsing feature in layer {layer_name}: {str(e)}")
-            logger.debug("Feature parsing error details:", exc_info=True)
-            logger.debug(f"Feature fields: {[child.tag.split('}')[-1] for child in feature]}")
+            logger.error(f"Error parsing feature in layer {layer_name}: {str(e)}", exc_info=True)
             return None
 
     @backoff.on_exception(
@@ -239,43 +232,62 @@ class WaterProjects(Source):
     async def _insert_batch(self, client, features):
         """Insert a batch of features"""
         if not features:
+            logger.warning("No features to insert in batch")
             return 0
         
         try:
+            logger.info(f"Preparing to insert batch of {len(features)} features")
+            
             values = []
             for f in features:
-                # Only look for area_ha since we normalized it during parsing
-                area = None
-                if 'area_ha' in f:
-                    try:
-                        area = float(f['area_ha'])
-                    except (ValueError, TypeError):
-                        logger.warning(f"Invalid area value: {f['area_ha']}")
-                        area = None
+                try:
+                    # Only look for area_ha since we normalized it during parsing
+                    area = None
+                    if 'area_ha' in f:
+                        try:
+                            area = float(f['area_ha'])
+                        except (ValueError, TypeError):
+                            logger.warning(f"Invalid area value: {f['area_ha']}")
                 
-                values.append((
-                    f['layer_name'],
-                    area,
-                    f.get('journalnr'),
-                    f.get('titel'),
-                    f.get('ansoeger'),
-                    f.get('marknr'),
-                    f.get('cvr'),
-                    clean_value(f.get('startaar')),
-                    clean_value(f.get('tilsagnsaa')),
-                    clean_value(f.get('slutaar')),
-                    datetime.strptime(f.get('startdato', ''), '%d-%m-%Y').date() if f.get('startdato') else None,
-                    datetime.strptime(f.get('slutdato', ''), '%d-%m-%Y').date() if f.get('slutdato') else None,
-                    f.get('ordning'),
-                    f.get('budget'),
-                    f.get('indsats'),
-                    f.get('projektn'),
-                    f.get('a_runde'),
-                    f.get('afgoer_fase2'),
-                    f.get('projektgodk'),
-                    f['geometry'].wkt
-                ))
+                    # Log the WKT representation
+                    wkt = f['geometry'].wkt if f['geometry'] else None
+                    if not wkt:
+                        logger.warning("Empty geometry found in feature")
+                        continue
+                
+                    values.append((
+                        f['layer_name'],
+                        area,
+                        f.get('journalnr'),
+                        f.get('titel'),
+                        f.get('ansoeger'),
+                        f.get('marknr'),
+                        f.get('cvr'),
+                        clean_value(f.get('startaar')),
+                        clean_value(f.get('tilsagnsaa')),
+                        clean_value(f.get('slutaar')),
+                        datetime.strptime(f.get('startdato', ''), '%d-%m-%Y').date() if f.get('startdato') else None,
+                        datetime.strptime(f.get('slutdato', ''), '%d-%m-%Y').date() if f.get('slutdato') else None,
+                        f.get('ordning'),
+                        f.get('budget'),
+                        f.get('indsats'),
+                        f.get('projektn'),
+                        f.get('a_runde'),
+                        f.get('afgoer_fase2'),
+                        f.get('projektgodk'),
+                        wkt
+                    ))
+                except Exception as e:
+                    logger.error(f"Error preparing feature for insert: {str(e)}")
+                    continue
 
+            if not values:
+                logger.warning("No valid values to insert after processing")
+                return 0
+
+            logger.info(f"Executing insert for {len(values)} features")
+            
+            # Execute the insert
             await client.executemany("""
                 INSERT INTO water_projects (
                     layer_name, area_ha, journalnr, titel, 
@@ -289,18 +301,22 @@ class WaterProjects(Source):
                         ST_GeomFromText($20, 25832))
             """, values)
             
+            logger.info(f"Successfully inserted {len(values)} features")
             return len(values)
             
         except Exception as e:
-            logger.error(f"Error inserting batch: {str(e)}")
+            logger.error(f"Error inserting batch: {str(e)}", exc_info=True)
             if features:
                 logger.error(f"First feature data: {features[0]}")
-            raise
+            return 0
 
     async def sync(self, client):
         """Sync water projects data"""
         logger.info("Starting water projects sync...")
-        total_processed = 0
+        
+        # Check if table exists and is empty
+        count = await client.fetchval("SELECT COUNT(*) FROM water_projects")
+        logger.info(f"Current record count in water_projects: {count}")
         
         await self._create_tables(client)
         
