@@ -210,71 +210,55 @@ class WaterProjects(Source):
 
     async def _create_tables(self, client):
         """Create necessary database tables"""
-        # First check if table exists
-        table_exists = await client.fetchval("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'water_projects'
-            )
+        # Drop existing tables
+        await client.execute("""
+            DROP TABLE IF EXISTS water_projects CASCADE;
+            DROP TABLE IF EXISTS water_projects_combined CASCADE;
         """)
         
-        if not table_exists:
-            await client.execute("""
-                CREATE TABLE water_projects (
-                    id SERIAL PRIMARY KEY,
-                    layer_name TEXT,
-                    area_ha NUMERIC,
-                    journalnr TEXT,
-                    titel TEXT,
-                    ansoeger TEXT,
-                    marknr TEXT,
-                    cvr TEXT,
-                    startaar INTEGER,
-                    tilsagnsaa INTEGER,
-                    slutaar INTEGER,
-                    startdato DATE,
-                    slutdato DATE,
-                    ordning TEXT,
-                    budget NUMERIC,
-                    indsats TEXT,
-                    projektn TEXT,
-                    a_runde TEXT,
-                    afgoer_fase2 TEXT,
-                    projektgodk TEXT,
-                    geometry GEOMETRY(GEOMETRY, 25832),
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
+        # Create fresh tables
+        await client.execute("""
+            CREATE TABLE water_projects (
+                id SERIAL PRIMARY KEY,
+                layer_name TEXT,
+                area_ha NUMERIC,
+                journalnr TEXT,
+                titel TEXT,
+                ansoeger TEXT,
+                marknr TEXT,
+                cvr TEXT,
+                startaar INTEGER,
+                tilsagnsaa INTEGER,
+                slutaar INTEGER,
+                startdato DATE,
+                slutdato DATE,
+                ordning TEXT,
+                budget NUMERIC,
+                indsats TEXT,
+                projektn TEXT,
+                a_runde TEXT,
+                afgoer_fase2 TEXT,
+                projektgodk TEXT,
+                geometry GEOMETRY(GEOMETRY, 25832),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
 
-                CREATE INDEX water_projects_geometry_idx 
-                ON water_projects USING GIST (geometry);
-                
-                CREATE INDEX water_projects_layer_idx 
-                ON water_projects (layer_name);
-            """)
-        else:
-            # Verify columns exist and add if missing
-            await client.execute("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                                 WHERE table_name = 'water_projects' AND column_name = 'projektn') THEN
-                        ALTER TABLE water_projects ADD COLUMN projektn TEXT;
-                    END IF;
-                    -- Add similar checks for other columns if needed
-                END $$;
-            """)
-        
-        if self.create_combined:
-            await client.execute("""
-                CREATE TABLE IF NOT EXISTS water_projects_combined (
-                    id SERIAL PRIMARY KEY,
-                    geometry GEOMETRY(MULTIPOLYGON, 25832),
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-                
-                CREATE INDEX IF NOT EXISTS water_projects_combined_geometry_idx 
-                ON water_projects_combined USING GIST (geometry);
-            """)
+            CREATE INDEX water_projects_geometry_idx 
+            ON water_projects USING GIST (geometry);
+            
+            CREATE INDEX water_projects_layer_idx 
+            ON water_projects (layer_name);
+            
+            CREATE TABLE water_projects_combined (
+                id SERIAL PRIMARY KEY,
+                geometry GEOMETRY(MULTIPOLYGON, 25832),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE INDEX water_projects_combined_geometry_idx 
+            ON water_projects_combined USING GIST (geometry);
+        """)
 
     async def _insert_batch(self, client, features):
         """Insert a batch of features"""
@@ -365,6 +349,12 @@ class WaterProjects(Source):
             # Create tables if they don't exist
             await self._create_tables(client)
             
+            # Clear existing data
+            logger.info("Clearing existing data...")
+            await client.execute("TRUNCATE water_projects")
+            if self.create_combined:
+                await client.execute("TRUNCATE water_projects_combined")
+            
             async with aiohttp.ClientSession(headers=self.headers) as session:
                 for layer in self.layers:
                     logger.info(f"\nProcessing layer: {layer}")
@@ -420,6 +410,39 @@ class WaterProjects(Source):
                     except Exception as e:
                         logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                         continue
+            
+            # Create combined layer if enabled
+            if self.create_combined:
+                logger.info("Creating combined layer...")
+                try:
+                    # Set a longer timeout for the complex spatial operation
+                    await client.execute("SET statement_timeout TO '1h'")
+                    
+                    # Clear existing combined data
+                    await client.execute("TRUNCATE water_projects_combined")
+                    
+                    # Dissolve all geometries into one
+                    await client.execute("""
+                        INSERT INTO water_projects_combined (geometry)
+                        SELECT ST_Multi(ST_Union(geometry))
+                        FROM (
+                            SELECT (ST_Dump(geometry)).geom as geometry 
+                            FROM water_projects 
+                            WHERE geometry IS NOT NULL
+                        ) as subquery;
+                    """)
+                    
+                    # Log the result
+                    combined_count = await client.fetchval(
+                        "SELECT COUNT(*) FROM water_projects_combined"
+                    )
+                    logger.info(f"Created combined layer with {combined_count} features")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating combined layer: {str(e)}", exc_info=True)
+                finally:
+                    # Reset timeout to default
+                    await client.execute("RESET statement_timeout")
             
             return total_processed
         except Exception as e:
