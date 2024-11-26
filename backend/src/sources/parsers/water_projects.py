@@ -272,20 +272,50 @@ class WaterProjects(Source):
             values = []
             for f in features:
                 try:
-                    # Only look for area_ha since we normalized it during parsing
-                    area = None
-                    if 'area_ha' in f:
+                    # Convert area_ha to numeric, handling potential invalid formats
+                    try:
+                        area = float(f.get('areal_ha', '0').replace(',', '.')) if f.get('areal_ha') else None
+                    except (ValueError, TypeError):
+                        area = None
+                        logger.warning(f"Invalid area_ha value: {f.get('areal_ha')}")
+                    
+                    # Convert year fields to integers, handling empty strings and invalid values
+                    def safe_int(value):
                         try:
-                            area = float(f['area_ha'])
+                            return int(value) if value and value.strip() else None
                         except (ValueError, TypeError):
-                            logger.warning(f"Invalid area value: {f['area_ha']}")
-                
-                    # Log the WKT representation
+                            return None
+                    
+                    startaar = safe_int(f.get('startaar'))
+                    tilsagnsaa = safe_int(f.get('tilsagnsaa'))
+                    slutaar = safe_int(f.get('slutaar'))
+                    
+                    # Convert budget to numeric, handling potential invalid formats
+                    try:
+                        budget = float(str(f.get('budget', '0')).replace(',', '.')) if f.get('budget') else None
+                    except (ValueError, TypeError):
+                        budget = None
+                        logger.warning(f"Invalid budget value: {f.get('budget')}")
+                    
+                    # Convert dates with better error handling
+                    def safe_date(date_str):
+                        if not date_str:
+                            return None
+                        try:
+                            return datetime.strptime(date_str.strip(), '%d-%m-%Y').date()
+                        except (ValueError, AttributeError):
+                            logger.warning(f"Invalid date format: {date_str}")
+                            return None
+                    
+                    startdato = safe_date(f.get('startdato'))
+                    slutdato = safe_date(f.get('slutdato'))
+                    
+                    # Get WKT
                     wkt = f['geometry'].wkt if f['geometry'] else None
                     if not wkt:
                         logger.warning("Empty geometry found in feature")
                         continue
-                
+                    
                     values.append((
                         f['layer_name'],
                         area,
@@ -294,13 +324,13 @@ class WaterProjects(Source):
                         f.get('ansoeger'),
                         f.get('marknr'),
                         f.get('cvr'),
-                        clean_value(f.get('startaar')),
-                        clean_value(f.get('tilsagnsaa')),
-                        clean_value(f.get('slutaar')),
-                        datetime.strptime(f.get('startdato', ''), '%d-%m-%Y').date() if f.get('startdato') else None,
-                        datetime.strptime(f.get('slutdato', ''), '%d-%m-%Y').date() if f.get('slutdato') else None,
+                        startaar,
+                        tilsagnsaa,
+                        slutaar,
+                        startdato,
+                        slutdato,
                         f.get('ordning'),
-                        f.get('budget'),
+                        budget,
                         f.get('indsats'),
                         f.get('projektn'),
                         f.get('a_runde'),
@@ -308,8 +338,11 @@ class WaterProjects(Source):
                         f.get('projektgodk'),
                         wkt
                     ))
+                    
                 except Exception as e:
                     logger.error(f"Error preparing feature for insert: {str(e)}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Problematic feature: {f}")
                     continue
 
             if not values:
@@ -318,7 +351,6 @@ class WaterProjects(Source):
 
             logger.info(f"Executing insert for {len(values)} features")
             
-            # Execute the insert
             await client.executemany("""
                 INSERT INTO water_projects (
                     layer_name, area_ha, journalnr, titel, 
@@ -332,7 +364,6 @@ class WaterProjects(Source):
                         ST_GeomFromText($20, 25832))
             """, values)
             
-            logger.info(f"Successfully inserted {len(values)} features")
             return len(values)
             
         except Exception as e:
