@@ -40,10 +40,17 @@ class WaterProjects(Source):
             "Vandprojekter:Lavbund_E_samlet",
             "Vandprojekter:Lavbund_F_samlet",
             "Vandprojekter:Private_vaadomraader",
-            "Vandprojekter:Restaurering_af_aadale_2024"
+            "Vandprojekter:Restaurering_af_aadale_2024",
+            "vandprojekter:kla_projektforslag",
+            "vandprojekter:kla_projektomraader"
         ]
         
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
+        
+        self.url_mapping = {
+            'vandprojekter:kla_projektforslag': 'https://wfs2-miljoegis.mim.dk/vandprojekter/wfs',
+            'vandprojekter:kla_projektomraader': 'https://wfs2-miljoegis.mim.dk/vandprojekter/wfs'
+        }
 
     def _get_params(self, layer, start_index=0):
         """Get WFS request parameters"""
@@ -83,8 +90,11 @@ class WaterProjects(Source):
             # Get the namespace from the feature's tag
             namespace = feature.tag.split('}')[0].strip('{')
             
-            # Find geometry using the correct namespace
+            # Handle both geometry field names
             geom_elem = feature.find(f'{{%s}}the_geom' % namespace)
+            if geom_elem is None:
+                geom_elem = feature.find(f'{{%s}}wkb_geometry' % namespace)
+            
             if geom_elem is None:
                 logger.warning(f"Could not find geometry element in feature: {feature.tag}")
                 return None
@@ -128,9 +138,11 @@ class WaterProjects(Source):
         """Fetch a chunk of features with retries"""
         async with self.request_semaphore:
             params = self._get_params(layer, start_index)
+            url = self.url_mapping.get(layer, self.config['url'])
+            
             try:
                 async with session.get(
-                    self.config['url'], 
+                    url, 
                     params=params,
                     timeout=self.request_timeout_config
                 ) as response:
@@ -180,7 +192,7 @@ class WaterProjects(Source):
                 raise
 
     async def _create_tables(self, client):
-        """Create necessary database tables"""
+        """Create required tables if they don't exist"""
         await client.execute("""
             CREATE TABLE IF NOT EXISTS water_projects (
                 id SERIAL PRIMARY KEY,
@@ -199,6 +211,10 @@ class WaterProjects(Source):
                 ordning TEXT,
                 budget TEXT,
                 indsats TEXT,
+                projektn TEXT,
+                a_runde TEXT,
+                afgoer_fase2 TEXT,
+                projektgodk TEXT,
                 geometry GEOMETRY(POLYGON, 25832)
             );
             
@@ -217,25 +233,18 @@ class WaterProjects(Source):
         try:
             values = []
             for f in features:
-                # More robust area handling
+                # Only look for area_ha since we normalized it during parsing
                 area = None
-                # First check if area_ha exists directly
                 if 'area_ha' in f:
-                    area = float(f['area_ha'])
-                # Then check for AREAL_HA (case variations)
-                elif 'areal_ha' in f or 'AREAL_HA' in f:
-                    area = float(f.get('areal_ha') or f.get('AREAL_HA'))
-                # Finally check for IMK_areal
-                elif 'imk_areal' in f:
-                    area = float(f['imk_areal'])
+                    try:
+                        area = float(f['area_ha'])
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid area value: {f['area_ha']}")
+                        area = None
                 
-                # Add debug logging
-                logger.debug(f"Processing feature with fields: {list(f.keys())}")
-                logger.debug(f"Extracted area value: {area}")
-
                 values.append((
                     f['layer_name'],
-                    area,  # Now this will be None if no area field was found
+                    area,
                     f.get('journalnr'),
                     f.get('titel'),
                     f.get('ansoeger'),
@@ -249,6 +258,10 @@ class WaterProjects(Source):
                     f.get('ordning'),
                     f.get('budget'),
                     f.get('indsats'),
+                    f.get('projektn'),
+                    f.get('a_runde'),
+                    f.get('afgoer_fase2'),
+                    f.get('projektgodk'),
                     f['geometry'].wkt
                 ))
 
@@ -256,17 +269,21 @@ class WaterProjects(Source):
                 INSERT INTO water_projects (
                     layer_name, area_ha, journalnr, titel, 
                     ansoeger, marknr, cvr, startaar, tilsagnsaa, slutaar,
-                    startdato, slutdato, ordning, budget, indsats, geometry
+                    startdato, slutdato, ordning, budget, indsats,
+                    projektn, a_runde, afgoer_fase2, projektgodk,
+                    geometry
                 )
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 
-                        $12, $13, $14, $15, ST_GeomFromText($16, 25832))
+                        $12, $13, $14, $15, $16, $17, $18, $19,
+                        ST_GeomFromText($20, 25832))
             """, values)
             
             return len(values)
             
         except Exception as e:
             logger.error(f"Error inserting batch: {str(e)}")
-            logger.error("First feature keys for debugging: %s", list(features[0].keys()) if features else "No features")
+            if features:
+                logger.error(f"First feature data: {features[0]}")
             raise
 
     async def sync(self, client):

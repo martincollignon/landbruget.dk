@@ -30,6 +30,7 @@ SOURCES = {
         "type": "wfs",
         "description": "Water projects from various Danish programs",
         "url": "https://geodata.fvm.dk/geoserver/wfs",
+        "url_mim": "https://wfs2-miljoegis.mim.dk/vandprojekter/wfs",
         "frequency": "weekly",
         "enabled": True
     }
