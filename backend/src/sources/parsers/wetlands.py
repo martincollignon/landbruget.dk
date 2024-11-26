@@ -26,6 +26,12 @@ class Wetlands(Source):
             sock_read=300
         )
         
+        self.total_timeout_config = ClientTimeout(
+            total=self.total_timeout,
+            connect=60,
+            sock_read=300
+        )
+        
         self.namespaces = {
             'wfs': 'http://www.opengis.net/wfs/2.0',
             'natur': 'http://wfs2-miljoegis.mim.dk/natur',
