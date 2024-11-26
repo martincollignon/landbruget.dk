@@ -124,10 +124,6 @@ class WaterProjects(Source):
         async with self.request_semaphore:
             params = self._get_params(layer, start_index)
             try:
-                logger.debug(f"Request URL: {self.config['url']}")
-                logger.debug(f"Request params: {params}")
-                logger.debug(f"Request headers: {self.headers}")
-                
                 async with session.get(
                     self.config['url'], 
                     params=params,
@@ -139,19 +135,37 @@ class WaterProjects(Source):
                         raise ClientError(f"Server returned status {response.status}")
                     
                     text = await response.text()
-                    logger.debug(f"Response size: {len(text)} bytes")
+                    logger.debug(f"Raw XML response for {layer} (first 500 chars): {text[:500]}")
                     
-                    root = ET.fromstring(text)
+                    try:
+                        root = ET.fromstring(text)
+                    except ET.ParseError as e:
+                        logger.error(f"XML Parse error for {layer}: {str(e)}")
+                        logger.error(f"Problematic XML: {text[:1000]}")
+                        raise
                     
+                    # Log the root element and its immediate children
+                    logger.debug(f"Root tag: {root.tag}")
+                    logger.debug("Root's children tags:")
+                    for child in root:
+                        logger.debug(f"- {child.tag}")
+
+                    # Find the correct namespace from the root element
+                    namespaces = {}
+                    for elem in root.iter():
+                        if '}' in elem.tag:
+                            ns_url = elem.tag.split('}')[0].strip('{')
+                            namespaces['ns'] = ns_url
+                            break
+
                     features = []
-                    for feature_elem in root.findall('.//*[local-name()="member"]/*'):
-                        feature = self._parse_feature(feature_elem, layer)
-                        if feature and feature['geometry']:
-                            features.append(feature)
-                        else:
-                            logger.warning(f"Skipped invalid feature in {layer} at index {start_index}")
+                    # Use direct tag matching instead of local-name()
+                    for member in root.findall('.//ns:member', namespaces=namespaces):
+                        for feature in member:
+                            parsed = self._parse_feature(feature, layer)
+                            if parsed and parsed['geometry']:
+                                features.append(parsed)
                     
-                    logger.info(f"Layer {layer}, chunk {start_index}: parsed {len(features)} valid features")
                     return features
                     
             except Exception as e:
@@ -273,11 +287,19 @@ class WaterProjects(Source):
                         logger.info(f"Layer {layer}: found {total_features:,} total features")
                         
                         # Process first batch
-                        features = [
-                            self._parse_feature(f, layer) 
-                            for f in root.findall('.//*[local-name()="member"]/*')
-                        ]
-                        features = [f for f in features if f and f['geometry']]
+                        features = []
+                        namespaces = {}
+                        for elem in root.iter():
+                            if '}' in elem.tag:
+                                ns_url = elem.tag.split('}')[0].strip('{')
+                                namespaces['ns'] = ns_url
+                                break
+                                
+                        for member in root.findall('.//ns:member', namespaces=namespaces):
+                            for feature in member:
+                                parsed = self._parse_feature(feature, layer)
+                                if parsed and parsed['geometry']:
+                                    features.append(parsed)
                         
                         if features:
                             inserted = await self._insert_batch(client, features)
