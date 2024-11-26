@@ -226,7 +226,7 @@ class WaterProjects(Source):
                 titel TEXT,
                 ansoeger TEXT,
                 marknr TEXT,
-                cvr TEXT,
+                cvr INTEGER,
                 startaar INTEGER,
                 tilsagnsaa INTEGER,
                 slutaar INTEGER,
