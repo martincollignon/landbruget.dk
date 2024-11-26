@@ -70,19 +70,41 @@ class WaterProjects(Source):
     def _parse_geometry(self, geom_elem):
         """Parse GML geometry into WKT"""
         try:
-            # Get the namespace from the geometry element
-            namespace = geom_elem.tag.split('}')[0].strip('{')
-            ns = {'ns': namespace}
+            # Handle both the_geom and wkb_geometry element names
+            gml_ns = '{http://www.opengis.net/gml/3.2}'
             
-            # Find coordinates using direct child access
-            coords_elem = geom_elem.find('.//ns:posList', namespaces=ns)
-            if coords_elem is None or not coords_elem.text:
+            # Find MultiSurface element
+            multi_surface = geom_elem.find(f'.//{gml_ns}MultiSurface')
+            if multi_surface is None:
+                logger.error("No MultiSurface element found")
                 return None
-                
-            coords = coords_elem.text.split()
-            coords = [(float(coords[i]), float(coords[i + 1])) 
-                     for i in range(0, len(coords), 2)]
-            return Polygon(coords)
+            
+            polygons = []
+            # Process each surface member
+            for surface_member in multi_surface.findall(f'.//{gml_ns}surfaceMember'):
+                polygon = surface_member.find(f'.//{gml_ns}Polygon')
+                if polygon is None:
+                    continue
+                    
+                # Get exterior ring coordinates
+                pos_list = polygon.find(f'.//{gml_ns}posList')
+                if pos_list is None or not pos_list.text:
+                    continue
+                    
+                # Parse coordinates
+                try:
+                    coords = [float(x) for x in pos_list.text.strip().split()]
+                    coords = [(coords[i], coords[i+1]) for i in range(0, len(coords), 2)]
+                    polygons.append(Polygon(coords))
+                except Exception as e:
+                    logger.error(f"Failed to parse coordinates: {str(e)}")
+                    continue
+            
+            if not polygons:
+                return None
+            
+            return MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
+            
         except Exception as e:
             logger.error(f"Error parsing geometry: {str(e)}")
             return None
