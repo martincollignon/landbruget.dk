@@ -18,6 +18,9 @@ class WaterProjects(Source):
         self.max_concurrent = 3
         self.request_timeout = 300
         
+        self.create_combined = config.get('create_combined', True)
+        self.combined_timeout = config.get('combined_timeout', 3600)
+        
         self.request_timeout_config = ClientTimeout(
             total=self.request_timeout,
             connect=60,
