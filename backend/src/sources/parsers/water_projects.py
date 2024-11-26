@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class WaterProjects(Source):
     def __init__(self, config):
         super().__init__(config)
-        self.batch_size = 1000
-        self.max_concurrent = 5
+        self.batch_size = 100
+        self.max_concurrent = 3
         self.request_timeout = 300
         
         self.request_timeout_config = ClientTimeout(
@@ -23,6 +23,10 @@ class WaterProjects(Source):
             connect=60,
             sock_read=300
         )
+        
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 QGIS/33603/macOS 15.1'
+        }
         
         self.layers = [
             "N2000_projekter:Hydrologi_E",
@@ -82,10 +86,12 @@ class WaterProjects(Source):
                 field_name = child.tag.split('}')[-1].lower()
                 if field_name != 'the_geom':
                     data[field_name] = clean_value(child.text)
+                    logger.debug(f"Parsed field {field_name}: {data[field_name]}")
             
             return data
         except Exception as e:
-            logger.error(f"Error parsing feature: {str(e)}")
+            logger.error(f"Error parsing feature in layer {layer_name}: {str(e)}")
+            logger.debug("Feature parsing error details:", exc_info=True)
             return None
 
     @backoff.on_exception(
@@ -98,14 +104,23 @@ class WaterProjects(Source):
         async with self.request_semaphore:
             params = self._get_params(layer, start_index)
             try:
-                logger.info(f"Fetching chunk for {layer} at index {start_index}")
+                logger.debug(f"Request URL: {self.config['url']}")
+                logger.debug(f"Request params: {params}")
+                logger.debug(f"Request headers: {self.headers}")
+                
                 async with session.get(
                     self.config['url'], 
                     params=params,
                     timeout=self.request_timeout_config
                 ) as response:
-                    response.raise_for_status()
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Error response from server: {error_text[:500]}")
+                        raise ClientError(f"Server returned status {response.status}")
+                    
                     text = await response.text()
+                    logger.debug(f"Response size: {len(text)} bytes")
+                    
                     root = ET.fromstring(text)
                     
                     features = []
@@ -113,12 +128,16 @@ class WaterProjects(Source):
                         feature = self._parse_feature(feature_elem, layer)
                         if feature and feature['geometry']:
                             features.append(feature)
+                        else:
+                            logger.warning(f"Skipped invalid feature in {layer} at index {start_index}")
                     
-                    logger.info(f"Layer {layer}, chunk {start_index}: parsed {len(features)} features")
+                    logger.info(f"Layer {layer}, chunk {start_index}: parsed {len(features)} valid features")
                     return features
                     
             except Exception as e:
-                logger.error(f"Error fetching chunk for {layer} at index {start_index}: {str(e)}")
+                logger.error(f"Error fetching chunk for {layer} at index {start_index}")
+                logger.error(f"Error details: {type(e).__name__}: {str(e)}")
+                logger.debug("Stack trace:", exc_info=True)
                 raise
 
     async def _create_tables(self, client):
@@ -207,21 +226,31 @@ class WaterProjects(Source):
         start_time = datetime.now()
         
         await self._create_tables(client)
+        logger.info("Database tables created/verified")
         
         # Clear existing data
         await client.execute("TRUNCATE TABLE water_projects")
+        logger.info("Existing data cleared from water_projects table")
         
         total_processed = 0
         
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=self.headers) as session:
             for layer in self.layers:
                 try:
+                    logger.info(f"\nProcessing layer: {layer}")
                     # Get initial batch to determine total count
                     params = self._get_params(layer, 0)
                     async with session.get(self.config['url'], params=params) as response:
+                        if response.status != 200:
+                            logger.error(f"Failed to fetch {layer}. Status: {response.status}")
+                            error_text = await response.text()
+                            logger.error(f"Error response: {error_text[:500]}")
+                            continue
+                        
                         text = await response.text()
                         root = ET.fromstring(text)
                         total_features = int(root.get('numberMatched', '0'))
+                        logger.info(f"Layer {layer}: found {total_features:,} total features")
                         
                         # Process first batch
                         features = [
@@ -233,22 +262,27 @@ class WaterProjects(Source):
                         if features:
                             inserted = await self._insert_batch(client, features)
                             total_processed += inserted
+                            logger.info(f"Layer {layer}: inserted first batch of {inserted:,} features")
                         
                         # Process remaining batches
                         for start_index in range(self.batch_size, total_features, self.batch_size):
+                            logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
                             features = await self._fetch_chunk(session, layer, start_index)
                             if features:
                                 inserted = await self._insert_batch(client, features)
                                 total_processed += inserted
+                                logger.info(f"Layer {layer}: inserted {inserted:,} features. Total processed: {total_processed:,}")
                                 
                 except Exception as e:
-                    logger.error(f"Error processing layer {layer}: {str(e)}")
+                    logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                     continue
         
         end_time = datetime.now()
         duration = end_time - start_time
-        logger.info(f"Sync completed. Total processed: {total_processed:,}")
-        logger.info(f"Total runtime: {duration}")
+        logger.info(f"\nSync completed:")
+        logger.info(f"- Total records processed: {total_processed:,}")
+        logger.info(f"- Total runtime: {duration}")
+        logger.info(f"- Average processing rate: {total_processed/duration.total_seconds():.1f} records/second")
         
         return total_processed
 
