@@ -1,0 +1,65 @@
+name: Deploy Wetlands Sync
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: landbrugsdata-1
+  SERVICE_NAME: wetlands-sync
+  REGION: europe-west1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - id: 'auth'
+      name: 'Authenticate to Google Cloud'
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Build and Push Container
+      run: |
+        cd backend
+        gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=wetlands-sync . --quiet
+
+    - name: Deploy Cloud Run Job
+      run: |
+        # Try to update first, if it fails (doesn't exist), create it
+        if ! gcloud run jobs update $SERVICE_NAME \
+          --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+          --region $REGION \
+          --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+          --set-secrets=DB_PASSWORD=db-password:latest \
+          --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
+          --cpu=2 \
+          --memory=4Gi \
+          --max-retries=3 \
+          --task-timeout=4h \
+          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db; then
+          gcloud run jobs create $SERVICE_NAME \
+            --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+            --region $REGION \
+            --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+            --set-secrets=DB_PASSWORD=db-password:latest \
+            --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
+            --cpu=2 \
+            --memory=4Gi \
+            --max-retries=3 \
+            --task-timeout=4h \
+            --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
+        fi 
