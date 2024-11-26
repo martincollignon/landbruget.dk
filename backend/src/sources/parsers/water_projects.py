@@ -208,20 +208,29 @@ class WaterProjects(Source):
         """Insert a batch of features"""
         if not features:
             return 0
-            
+        
         try:
             values = []
             for f in features:
-                # Use either areal_ha or imk_areal, preferring areal_ha if both exist
+                # More robust area handling
                 area = None
-                if f.get('areal_ha'):
-                    area = float(f['areal_ha'])
-                elif f.get('imk_areal'):
+                # First check if area_ha exists directly
+                if 'area_ha' in f:
+                    area = float(f['area_ha'])
+                # Then check for AREAL_HA (case variations)
+                elif 'areal_ha' in f or 'AREAL_HA' in f:
+                    area = float(f.get('areal_ha') or f.get('AREAL_HA'))
+                # Finally check for IMK_areal
+                elif 'imk_areal' in f:
                     area = float(f['imk_areal'])
+                
+                # Add debug logging
+                logger.debug(f"Processing feature with fields: {list(f.keys())}")
+                logger.debug(f"Extracted area value: {area}")
 
                 values.append((
                     f['layer_name'],
-                    area,
+                    area,  # Now this will be None if no area field was found
                     f.get('journalnr'),
                     f.get('titel'),
                     f.get('ansoeger'),
@@ -230,8 +239,8 @@ class WaterProjects(Source):
                     clean_value(f.get('startaar')),
                     clean_value(f.get('tilsagnsaa')),
                     clean_value(f.get('slutaar')),
-                    datetime.strptime(f['startdato'], '%d-%m-%Y').date() if f.get('startdato') else None,
-                    datetime.strptime(f['slutdato'], '%d-%m-%Y').date() if f.get('slutdato') else None,
+                    datetime.strptime(f.get('startdato', ''), '%d-%m-%Y').date() if f.get('startdato') else None,
+                    datetime.strptime(f.get('slutdato', ''), '%d-%m-%Y').date() if f.get('slutdato') else None,
                     f.get('ordning'),
                     f.get('budget'),
                     f.get('indsats'),
@@ -252,6 +261,7 @@ class WaterProjects(Source):
             
         except Exception as e:
             logger.error(f"Error inserting batch: {str(e)}")
+            logger.error("First feature keys for debugging: %s", list(features[0].keys()) if features else "No features")
             raise
 
     async def sync(self, client):
