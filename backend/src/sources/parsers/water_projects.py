@@ -60,8 +60,13 @@ class WaterProjects(Source):
     def _parse_geometry(self, geom_elem):
         """Parse GML geometry into WKT"""
         try:
-            coords_elem = geom_elem.find('.//*[local-name()="posList"]')
-            if coords_elem is None:
+            # Get the namespace from the geometry element
+            namespace = geom_elem.tag.split('}')[0].strip('{')
+            ns = {'ns': namespace}
+            
+            # Find coordinates using direct child access
+            coords_elem = geom_elem.find('.//ns:posList', namespaces=ns)
+            if coords_elem is None or not coords_elem.text:
                 return None
                 
             coords = coords_elem.text.split()
@@ -75,18 +80,33 @@ class WaterProjects(Source):
     def _parse_feature(self, feature, layer_name):
         """Parse a single feature into a dictionary"""
         try:
+            # Get the namespace from the feature's tag
+            namespace = feature.tag.split('}')[0].strip('{')
+            ns = {'ns': namespace}
+            
+            # Find geometry using the correct namespace
+            geom_elem = feature.find(f'{{%s}}the_geom' % namespace)
+            if geom_elem is None:
+                logger.warning(f"Could not find geometry element in feature: {feature.tag}")
+                return None
+
             # Extract base data
             data = {
                 'layer_name': layer_name,
-                'geometry': self._parse_geometry(feature.find('.//*[local-name()="the_geom"]'))
+                'geometry': self._parse_geometry(geom_elem)
             }
             
-            # Extract all other fields
+            # Extract all other fields with proper case handling
             for child in feature:
-                field_name = child.tag.split('}')[-1].lower()
-                if field_name != 'the_geom':
-                    data[field_name] = clean_value(child.text)
-                    logger.debug(f"Parsed field {field_name}: {data[field_name]}")
+                field_name = child.tag.split('}')[-1]
+                if field_name.lower() != 'the_geom':
+                    # Handle different area field names
+                    if field_name.upper() in ['AREAL_HA', 'IMK_AREAL']:
+                        data['area_ha'] = clean_value(child.text)
+                    else:
+                        # Keep original field name case for other fields
+                        data[field_name.lower()] = clean_value(child.text)
+                    logger.debug(f"Parsed field {field_name}: {data[field_name.lower()]}")
             
             return data
         except Exception as e:
