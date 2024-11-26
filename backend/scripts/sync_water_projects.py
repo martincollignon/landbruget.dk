@@ -63,11 +63,15 @@ async def main() -> Optional[int]:
         logger.info("Database connection pool established")
         
         async with pool.acquire() as conn:
-            water_projects = WaterProjects(SOURCES["water_projects"])
+            config = SOURCES["water_projects"].copy()
+            water_projects = WaterProjects(config)
             total_synced = await water_projects.sync(conn)
             logger.info(f"Total records synced: {total_synced:,}")
             return total_synced
         
+    except asyncpg.PostgresError as e:
+        logger.error(f"Database error during sync: {str(e)}")
+        raise
     except Exception as e:
         logger.error(f"Error during sync: {str(e)}")
         raise
