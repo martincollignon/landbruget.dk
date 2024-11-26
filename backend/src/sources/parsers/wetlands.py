@@ -1,10 +1,10 @@
 from pathlib import Path
 import asyncio
 import xml.etree.ElementTree as ET
-import geopandas as gpd
-import aiohttp
 import logging
-from shapely.geometry import Polygon
+import aiohttp
+from shapely.geometry import Polygon, MultiPolygon
+from shapely.wkt import dumps as wkt_dumps
 from datetime import datetime
 import backoff
 from aiohttp import ClientError, ClientTimeout
@@ -15,19 +15,13 @@ logger = logging.getLogger(__name__)
 class Wetlands(Source):
     def __init__(self, config):
         super().__init__(config)
-        self.batch_size = 100000  # WFS server seems happy with this batch size
-        self.max_concurrent = 5   # Limit concurrent requests
-        self.request_timeout = 300  # 5 minutes
-        self.total_timeout = 7200  # 2 hours
+        self.batch_size = 100000
+        self.max_concurrent = 5
+        self.request_timeout = 300
+        self.total_timeout = 7200
         
         self.request_timeout_config = ClientTimeout(
             total=self.request_timeout,
-            connect=60,
-            sock_read=300
-        )
-        
-        self.total_timeout_config = ClientTimeout(
-            total=self.total_timeout,
             connect=60,
             sock_read=300
         )
