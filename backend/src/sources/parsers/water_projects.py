@@ -82,7 +82,6 @@ class WaterProjects(Source):
         try:
             # Get the namespace from the feature's tag
             namespace = feature.tag.split('}')[0].strip('{')
-            ns = {'ns': namespace}
             
             # Find geometry using the correct namespace
             geom_elem = feature.find(f'{{%s}}the_geom' % namespace)
@@ -99,19 +98,25 @@ class WaterProjects(Source):
             # Extract all other fields with proper case handling
             for child in feature:
                 field_name = child.tag.split('}')[-1]
+                field_value = clean_value(child.text)
+                
                 if field_name.lower() != 'the_geom':
-                    # Handle different area field names
-                    if field_name.upper() in ['AREAL_HA', 'IMK_AREAL']:
-                        data['area_ha'] = clean_value(child.text)
+                    # Handle all area field variations
+                    if field_name in ['AREAL_HA', 'IMK_areal', 'Areal_HA']:
+                        data['area_ha'] = field_value
                     else:
-                        # Keep original field name case for other fields
-                        data[field_name.lower()] = clean_value(child.text)
-                    logger.debug(f"Parsed field {field_name}: {data[field_name.lower()]}")
+                        # Store all other fields in lowercase
+                        data[field_name.lower()] = field_value
+            
+            # Debug logging
+            logger.debug(f"Parsed fields: {list(data.keys())}")
+            logger.debug(f"Area value: {data.get('area_ha')}")
             
             return data
         except Exception as e:
             logger.error(f"Error parsing feature in layer {layer_name}: {str(e)}")
             logger.debug("Feature parsing error details:", exc_info=True)
+            logger.debug(f"Feature fields: {[child.tag.split('}')[-1] for child in feature]}")
             return None
 
     @backoff.on_exception(
