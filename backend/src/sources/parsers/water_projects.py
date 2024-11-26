@@ -210,46 +210,72 @@ class WaterProjects(Source):
                 raise
 
     async def _create_tables(self, client):
-        """Create required tables if they don't exist"""
-        await client.execute("""
-            CREATE TABLE IF NOT EXISTS water_projects (
-                id SERIAL PRIMARY KEY,
-                layer_name VARCHAR(255),
-                journalnr VARCHAR(255),
-                titel VARCHAR(255),
-                ansoeger VARCHAR(255),
-                marknr VARCHAR(255),
-                cvr VARCHAR(255),
-                startaar INTEGER,
-                tilsagnsaa INTEGER,
-                slutaar INTEGER,
-                startdato DATE,
-                slutdato DATE,
-                ordning VARCHAR(255),
-                budget NUMERIC,
-                indsats VARCHAR(255),
-                projektn VARCHAR(255),
-                a_runde VARCHAR(255),
-                afgoer_fase2 VARCHAR(255),
-                projektgodk VARCHAR(255),
-                area_ha FLOAT,
-                geometry GEOMETRY(MULTIPOLYGON, 25832)
-            );
-            
-            CREATE TABLE IF NOT EXISTS water_projects_combined (
-                id SERIAL PRIMARY KEY,
-                geometry GEOMETRY(MULTIPOLYGON, 25832)
-            );
-            
-            CREATE INDEX IF NOT EXISTS water_projects_geometry_idx 
-            ON water_projects USING GIST (geometry);
-            
-            CREATE INDEX IF NOT EXISTS water_projects_layer_idx 
-            ON water_projects (layer_name);
-            
-            CREATE INDEX IF NOT EXISTS water_projects_combined_geometry_idx 
-            ON water_projects_combined USING GIST (geometry);
+        """Create necessary database tables"""
+        # First check if table exists
+        table_exists = await client.fetchval("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'water_projects'
+            )
         """)
+        
+        if not table_exists:
+            await client.execute("""
+                CREATE TABLE water_projects (
+                    id SERIAL PRIMARY KEY,
+                    layer_name TEXT,
+                    area_ha NUMERIC,
+                    journalnr TEXT,
+                    titel TEXT,
+                    ansoeger TEXT,
+                    marknr TEXT,
+                    cvr TEXT,
+                    startaar INTEGER,
+                    tilsagnsaa INTEGER,
+                    slutaar INTEGER,
+                    startdato DATE,
+                    slutdato DATE,
+                    ordning TEXT,
+                    budget NUMERIC,
+                    indsats TEXT,
+                    projektn TEXT,
+                    a_runde TEXT,
+                    afgoer_fase2 TEXT,
+                    projektgodk TEXT,
+                    geometry GEOMETRY(GEOMETRY, 25832),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX water_projects_geometry_idx 
+                ON water_projects USING GIST (geometry);
+                
+                CREATE INDEX water_projects_layer_idx 
+                ON water_projects (layer_name);
+            """)
+        else:
+            # Verify columns exist and add if missing
+            await client.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                 WHERE table_name = 'water_projects' AND column_name = 'projektn') THEN
+                        ALTER TABLE water_projects ADD COLUMN projektn TEXT;
+                    END IF;
+                    -- Add similar checks for other columns if needed
+                END $$;
+            """)
+        
+        if self.create_combined:
+            await client.execute("""
+                CREATE TABLE IF NOT EXISTS water_projects_combined (
+                    id SERIAL PRIMARY KEY,
+                    geometry GEOMETRY(MULTIPOLYGON, 25832),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS water_projects_combined_geometry_idx 
+                ON water_projects_combined USING GIST (geometry);
+            """)
 
     async def _insert_batch(self, client, features):
         """Insert a batch of features"""
@@ -333,106 +359,73 @@ class WaterProjects(Source):
             return 0
 
     async def sync(self, client):
-        """Sync water projects data"""
-        logger.info("Starting water projects sync...")
+        """Sync all water project layers"""
+        total_processed = 0  # Initialize counter
         
-        # Check if table exists and is empty
-        count = await client.fetchval("SELECT COUNT(*) FROM water_projects")
-        logger.info(f"Current record count in water_projects: {count}")
-        
-        await self._create_tables(client)
-        
-        async with aiohttp.ClientSession(headers=self.headers) as session:
-            for layer in self.layers:
-                try:
+        try:
+            # Create tables if they don't exist
+            await self._create_tables(client)
+            
+            async with aiohttp.ClientSession(headers=self.headers) as session:
+                for layer in self.layers:
                     logger.info(f"\nProcessing layer: {layer}")
-                    
-                    # Use the correct URL based on the layer
-                    base_url = self.url_mapping.get(layer, self.config['url'])
-                    
-                    # Get initial batch to determine total count
-                    params = self._get_params(layer, 0)
-                    async with session.get(base_url, params=params) as response:
-                        if response.status != 200:
-                            logger.error(f"Failed to fetch {layer}. Status: {response.status}")
-                            error_text = await response.text()
-                            logger.error(f"Error response: {error_text[:500]}")
-                            continue
+                    try:
+                        # Use the correct URL based on the layer
+                        base_url = self.url_mapping.get(layer, self.config['url'])
                         
-                        text = await response.text()
-                        root = ET.fromstring(text)
-                        total_features = int(root.get('numberMatched', '0'))
-                        logger.info(f"Layer {layer}: found {total_features:,} total features")
-                        
-                        # Process first batch
-                        features = []
-                        namespaces = {}
-                        for elem in root.iter():
-                            if '}' in elem.tag:
-                                ns_url = elem.tag.split('}')[0].strip('{')
-                                namespaces['ns'] = ns_url
-                                break
-                                
-                        for member in root.findall('.//ns:member', namespaces=namespaces):
-                            for feature in member:
-                                parsed = self._parse_feature(feature, layer)
-                                if parsed and parsed['geometry']:
-                                    features.append(parsed)
-                        
-                        if features:
-                            inserted = await self._insert_batch(client, features)
-                            total_processed += inserted
-                            logger.info(f"Layer {layer}: inserted first batch of {inserted:,} features")
-                        
-                        # Process remaining batches
-                        for start_index in range(self.batch_size, total_features, self.batch_size):
-                            logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
-                            features = await self._fetch_chunk(session, layer, start_index)
+                        # Get initial batch to determine total count
+                        params = self._get_params(layer, 0)
+                        async with session.get(base_url, params=params) as response:
+                            if response.status != 200:
+                                logger.error(f"Failed to fetch {layer}. Status: {response.status}")
+                                error_text = await response.text()
+                                logger.error(f"Error response: {error_text[:500]}")
+                                continue
+                            
+                            text = await response.text()
+                            root = ET.fromstring(text)
+                            total_features = int(root.get('numberMatched', '0'))
+                            logger.info(f"Layer {layer}: found {total_features:,} total features")
+                            
+                            # Process first batch
+                            features = []
+                            namespaces = {}
+                            for elem in root.iter():
+                                if '}' in elem.tag:
+                                    ns_url = elem.tag.split('}')[0].strip('{')
+                                    namespaces['ns'] = ns_url
+                                    break
+                                    
+                            for member in root.findall('.//ns:member', namespaces=namespaces):
+                                for feature in member:
+                                    parsed = self._parse_feature(feature, layer)
+                                    if parsed and parsed['geometry']:
+                                        features.append(parsed)
+                            
                             if features:
                                 inserted = await self._insert_batch(client, features)
-                                total_processed += inserted
+                                if inserted:  # Ensure inserted is not None
+                                    total_processed += inserted
                                 logger.info(f"Layer {layer}: inserted {inserted:,} features. Total processed: {total_processed:,}")
+                            
+                            # Process remaining batches
+                            for start_index in range(self.batch_size, total_features, self.batch_size):
+                                logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
+                                features = await self._fetch_chunk(session, layer, start_index)
+                                if features:
+                                    inserted = await self._insert_batch(client, features)
+                                    if inserted:  # Ensure inserted is not None
+                                        total_processed += inserted
+                                    logger.info(f"Layer {layer}: inserted {inserted:,} features. Total processed: {total_processed:,}")
                                 
-                except Exception as e:
-                    logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
-                    continue
-        
-        # Add debug logging
-        logger.info(f"Finished processing individual layers. create_combined={self.create_combined}")
-        
-        # Create combined layer if enabled
-        if self.create_combined:
-            try:
-                logger.info("Starting combined layer creation...")
-                await client.execute("TRUNCATE TABLE water_projects_combined")
-                
-                # Add count logging before union
-                count = await client.fetchval("SELECT COUNT(*) FROM water_projects WHERE geometry IS NOT NULL")
-                logger.info(f"Found {count} geometries to combine")
-                
-                await client.execute("""
-                    INSERT INTO water_projects_combined (geometry)
-                    SELECT ST_Multi(ST_Union(geometry))
-                    FROM (
-                        SELECT ST_Buffer(geometry, 0) as geometry
-                        FROM water_projects
-                        WHERE geometry IS NOT NULL
-                    ) cleaned
-                """, timeout=self.combined_timeout)
-                
-                combined_count = await client.fetchval("""
-                    SELECT COUNT(*) FROM water_projects_combined
-                """)
-                logger.info(f"Successfully created combined layer with {combined_count} multipolygon features")
-                
-            except Exception as e:
-                logger.error(f"Error creating combined layer: {str(e)}")
-                logger.error("Combined layer creation failed, but individual layers were synced successfully")
-                logger.debug("Combined layer error details:", exc_info=True)
-        else:
-            logger.info("Combined layer creation is disabled in configuration")
-        
-        return total_processed
+                    except Exception as e:
+                        logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
+                        continue
+            
+            return total_processed
+        except Exception as e:
+            logger.error(f"Error in sync: {str(e)}", exc_info=True)
+            return total_processed  # Return current count even if error occurs
 
     async def fetch(self):
         """Not implemented - using sync() directly"""
