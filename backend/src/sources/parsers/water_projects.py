@@ -300,9 +300,9 @@ class WaterProjects(Source):
     async def sync(self, client):
         """Sync water projects data"""
         logger.info("Starting water projects sync...")
+        total_processed = 0
         
         await self._create_tables(client)
-        total_processed = 0
         
         async with aiohttp.ClientSession(headers=self.headers) as session:
             for layer in self.layers:
@@ -359,11 +359,18 @@ class WaterProjects(Source):
                     logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                     continue
         
-        # Add combined layer creation at the end
+        # Add debug logging
+        logger.info(f"Finished processing individual layers. create_combined={self.create_combined}")
+        
+        # Create combined layer if enabled
         if self.create_combined:
             try:
-                logger.info("Creating combined layer...")
+                logger.info("Starting combined layer creation...")
                 await client.execute("TRUNCATE TABLE water_projects_combined")
+                
+                # Add count logging before union
+                count = await client.fetchval("SELECT COUNT(*) FROM water_projects WHERE geometry IS NOT NULL")
+                logger.info(f"Found {count} geometries to combine")
                 
                 await client.execute("""
                     INSERT INTO water_projects_combined (geometry)
@@ -378,11 +385,14 @@ class WaterProjects(Source):
                 combined_count = await client.fetchval("""
                     SELECT COUNT(*) FROM water_projects_combined
                 """)
-                logger.info(f"Created combined layer with {combined_count} multipolygon features")
+                logger.info(f"Successfully created combined layer with {combined_count} multipolygon features")
                 
             except Exception as e:
                 logger.error(f"Error creating combined layer: {str(e)}")
                 logger.error("Combined layer creation failed, but individual layers were synced successfully")
+                logger.debug("Combined layer error details:", exc_info=True)
+        else:
+            logger.info("Combined layer creation is disabled in configuration")
         
         return total_processed
 
