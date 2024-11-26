@@ -26,10 +26,12 @@ jobs:
             cpu: 4
             memory: 8Gi
             secrets: DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest
+            sync_type: cadastral
           - name: wetlands-sync
             cpu: 2
             memory: 4Gi
             secrets: DB_PASSWORD=db-password:latest
+            sync_type: wetlands
       fail-fast: false
 
     steps:
@@ -54,12 +56,15 @@ jobs:
         set -e
         echo "Deploying ${{ matrix.service.name }}..."
         
+        # Set environment variables including SYNC_TYPE
+        ENV_VARS="DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata,SYNC_TYPE=${{ matrix.service.sync_type }}"
+        
         if ! gcloud run jobs update ${{ matrix.service.name }} \
           --image gcr.io/$PROJECT_ID/${{ matrix.service.name }} \
           --region $REGION \
           --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
           --set-secrets=${{ matrix.service.secrets }} \
-          --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
+          --set-env-vars=$ENV_VARS \
           --cpu=${{ matrix.service.cpu }} \
           --memory=${{ matrix.service.memory }} \
           --max-retries=3 \
@@ -71,7 +76,7 @@ jobs:
             --region $REGION \
             --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
             --set-secrets=${{ matrix.service.secrets }} \
-            --set-env-vars=DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata \
+            --set-env-vars=$ENV_VARS \
             --cpu=${{ matrix.service.cpu }} \
             --memory=${{ matrix.service.memory }} \
             --max-retries=3 \
