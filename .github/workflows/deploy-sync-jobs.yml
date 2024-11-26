@@ -30,6 +30,7 @@ jobs:
             cpu: 2
             memory: 4Gi
             secrets: DB_PASSWORD=db-password:latest
+      fail-fast: false
 
     steps:
     - uses: actions/checkout@v4
@@ -50,6 +51,9 @@ jobs:
 
     - name: Deploy Cloud Run Job
       run: |
+        set -e
+        echo "Deploying ${{ matrix.service.name }}..."
+        
         if ! gcloud run jobs update ${{ matrix.service.name }} \
           --image gcr.io/$PROJECT_ID/${{ matrix.service.name }} \
           --region $REGION \
@@ -61,6 +65,7 @@ jobs:
           --max-retries=3 \
           --task-timeout=4h \
           --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db; then
+          echo "Job doesn't exist, creating new job..."
           gcloud run jobs create ${{ matrix.service.name }} \
             --image gcr.io/$PROJECT_ID/${{ matrix.service.name }} \
             --region $REGION \
@@ -72,4 +77,6 @@ jobs:
             --max-retries=3 \
             --task-timeout=4h \
             --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
-        fi 
+        fi
+        
+        echo "Deployment of ${{ matrix.service.name }} completed successfully"
