@@ -24,5 +24,13 @@ SOURCES = {
         "url": "https://wfs.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWFS/1.0.0/WFS",
         "frequency": "weekly",
         "enabled": True
+    },
+    "water_projects": {
+        "name": "Danish Water Projects",
+        "type": "wfs",
+        "description": "Water projects from various Danish programs",
+        "url": "https://geodata.fvm.dk/geoserver/wfs",
+        "frequency": "weekly",
+        "enabled": True
     }
 }

@@ -3,6 +3,7 @@ import logging
 import os
 from scripts.sync_cadastral import main as sync_cadastral
 from scripts.sync_wetlands import main as sync_wetlands
+from scripts.sync_water_projects import main as sync_water_projects
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -27,11 +28,19 @@ async def run_sync() -> bool:
             if total_synced is not None:
                 logger.info(f"Wetlands sync completed. Total records: {total_synced:,}")
             
+        elif sync_type == 'water_projects':
+            total_synced = await sync_water_projects()
+            if total_synced is not None:
+                logger.info(f"Water projects sync completed. Total records: {total_synced:,}")
+            
         elif sync_type == 'all':
-            # Run both syncs
+            # Run all syncs
             cadastral_total = await sync_cadastral()
             wetlands_total = await sync_wetlands()
-            logger.info(f"All syncs completed. Cadastral: {cadastral_total:,}, Wetlands: {wetlands_total:,}")
+            water_projects_total = await sync_water_projects()
+            logger.info(f"All syncs completed. Cadastral: {cadastral_total:,}, "
+                       f"Wetlands: {wetlands_total:,}, "
+                       f"Water Projects: {water_projects_total:,}")
         
         else:
             logger.error(f"Unknown sync type: {sync_type}")
