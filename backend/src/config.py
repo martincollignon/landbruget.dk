@@ -32,6 +32,8 @@ SOURCES = {
         "url": "https://geodata.fvm.dk/geoserver/wfs",
         "url_mim": "https://wfs2-miljoegis.mim.dk/vandprojekter/wfs",
         "frequency": "weekly",
-        "enabled": True
+        "enabled": True,
+        "create_combined": True,
+        "combined_timeout": 3600
     }
 }
