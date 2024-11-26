@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import pandas as pd
 import logging
 from typing import Optional, Dict, Any
 
