@@ -272,68 +272,81 @@ class WaterProjects(Source):
             values = []
             for f in features:
                 try:
-                    # Convert area_ha to numeric, handling potential invalid formats
+                    # Handle area fields (multiple possible names)
+                    area_value = (
+                        f.get('AREAL_HA') or 
+                        f.get('IMK_areal') or 
+                        f.get('areal_ha') or 
+                        f.get('imk_areal')
+                    )
                     try:
-                        area = float(f.get('areal_ha', '0').replace(',', '.')) if f.get('areal_ha') else None
+                        area = float(str(area_value).replace(',', '.')) if area_value else None
                     except (ValueError, TypeError):
                         area = None
-                        logger.warning(f"Invalid area_ha value: {f.get('areal_ha')}")
-                    
-                    # Convert year fields to integers, handling empty strings and invalid values
+                        logger.warning(f"Invalid area value: {area_value}")
+
                     def safe_int(value):
+                        """Convert string to integer, handling None and invalid values"""
+                        if not value:
+                            return None
                         try:
-                            return int(value) if value and value.strip() else None
+                            cleaned = str(value).strip()
+                            return int(cleaned) if cleaned else None
                         except (ValueError, TypeError):
+                            logger.warning(f"Could not convert to integer: {value}")
                             return None
-                    
-                    startaar = safe_int(f.get('startaar'))
-                    tilsagnsaa = safe_int(f.get('tilsagnsaa'))
-                    slutaar = safe_int(f.get('slutaar'))
-                    
-                    # Convert budget to numeric, handling potential invalid formats
-                    try:
-                        budget = float(str(f.get('budget', '0')).replace(',', '.')) if f.get('budget') else None
-                    except (ValueError, TypeError):
-                        budget = None
-                        logger.warning(f"Invalid budget value: {f.get('budget')}")
-                    
-                    # Convert dates with better error handling
-                    def safe_date(date_str):
-                        if not date_str:
+
+                    def safe_date(value):
+                        """Convert string to date, handling multiple formats"""
+                        if not value:
                             return None
                         try:
-                            return datetime.strptime(date_str.strip(), '%d-%m-%Y').date()
-                        except (ValueError, AttributeError):
-                            logger.warning(f"Invalid date format: {date_str}")
+                            cleaned = str(value).strip()
+                            for fmt in ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%Y/%m/%d']:
+                                try:
+                                    return datetime.strptime(cleaned, fmt).date()
+                                except ValueError:
+                                    continue
+                            logger.warning(f"Could not parse date: {value}")
                             return None
-                    
-                    startdato = safe_date(f.get('startdato'))
-                    slutdato = safe_date(f.get('slutdato'))
-                    
+                        except (TypeError, AttributeError):
+                            return None
+
+                    def safe_numeric(value):
+                        """Convert string to float, handling commas and invalid values"""
+                        if not value:
+                            return None
+                        try:
+                            cleaned = str(value).strip().replace(',', '.')
+                            return float(cleaned) if cleaned else None
+                        except (ValueError, TypeError):
+                            logger.warning(f"Could not convert to numeric: {value}")
+                            return None
+
                     # Get WKT
                     wkt = f['geometry'].wkt if f['geometry'] else None
                     if not wkt:
                         logger.warning("Empty geometry found in feature")
                         continue
-                    
+
                     values.append((
-                        f['layer_name'],
+                        f.get('layer_name'),
                         area,
-                        f.get('journalnr'),
-                        f.get('titel'),
-                        f.get('ansoeger'),
-                        f.get('marknr'),
-                        f.get('cvr'),
-                        startaar,
-                        tilsagnsaa,
-                        slutaar,
-                        startdato,
-                        slutdato,
+                        f.get('journalnr') or f.get('Journalnr'),
+                        f.get('titel') or f.get('Titel') or f.get('projektn'),
+                        f.get('ansoeger') or f.get('Ansoeger'),
+                        f.get('marknr') or f.get('Marknr'),
+                        safe_int(f.get('cvr') or f.get('CVR')),
+                        safe_int(f.get('startaar') or f.get('Startaar')),
+                        safe_int(f.get('tilsagnsaa') or f.get('Tilsagnsaa')),
+                        safe_int(f.get('slutaar') or f.get('Slutaar')),
+                        safe_date(f.get('startdato') or f.get('Startdato')),
+                        safe_date(f.get('slutdato') or f.get('Slutdato')),
                         f.get('ordning'),
-                        budget,
+                        safe_numeric(f.get('budget') or f.get('Budget')),
                         f.get('indsats'),
                         f.get('projektn'),
-                        f.get('a_runde'),
+                        safe_int(f.get('a_runde')),
                         f.get('afgoer_fase2'),
                         f.get('projektgodk'),
                         wkt
@@ -341,8 +354,7 @@ class WaterProjects(Source):
                     
                 except Exception as e:
                     logger.error(f"Error preparing feature for insert: {str(e)}")
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Problematic feature: {f}")
+                    logger.error(f"Problematic feature: {f}")
                     continue
 
             if not values:
