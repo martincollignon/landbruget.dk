@@ -112,35 +112,34 @@ class WaterProjects(Source):
     def _parse_feature(self, feature, layer_name):
         """Parse a single feature into a dictionary"""
         try:
-            # Debug logging at start
-            logger.debug(f"Starting to parse feature for layer {layer_name}")
-            
             # Get the namespace from the feature's tag
             namespace = feature.tag.split('}')[0].strip('{')
             
-            # Handle both geometry field names
-            geom_elem = feature.find(f'{{%s}}the_geom' % namespace)
-            if geom_elem is None:
-                geom_elem = feature.find(f'{{%s}}wkb_geometry' % namespace)
-            
+            # Handle geometry first
+            geom_elem = feature.find(f'{{%s}}the_geom' % namespace) or feature.find(f'{{%s}}wkb_geometry' % namespace)
             if geom_elem is None:
                 logger.warning(f"No geometry found in feature for layer {layer_name}")
                 return None
 
-            # Parse geometry and log result
             geometry = self._parse_geometry(geom_elem)
             if geometry is None:
                 logger.warning(f"Failed to parse geometry for layer {layer_name}")
                 return None
 
-            # Extract base data
+            # Base data
             data = {
                 'layer_name': layer_name,
                 'geometry': geometry
             }
             
-            # Log successful parse
-            logger.debug(f"Successfully parsed feature for layer {layer_name}")
+            # Parse all other fields
+            for elem in feature:
+                if not elem.tag.endswith(('the_geom', 'wkb_geometry')):
+                    key = elem.tag.split('}')[-1].lower()  # Get the attribute name without namespace
+                    if elem.text:  # Only add non-empty values
+                        data[key] = elem.text.strip()
+            
+            logger.debug(f"Parsed fields for layer {layer_name}: {list(data.keys())}")
             return data
             
         except Exception as e:
