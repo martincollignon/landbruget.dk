@@ -196,26 +196,31 @@ class WaterProjects(Source):
         await client.execute("""
             CREATE TABLE IF NOT EXISTS water_projects (
                 id SERIAL PRIMARY KEY,
-                layer_name TEXT,
-                area_ha NUMERIC,
-                journalnr TEXT,
-                titel TEXT,
-                ansoeger TEXT,
-                marknr TEXT,
-                cvr TEXT,
+                layer_name VARCHAR(255),
+                journalnr VARCHAR(255),
+                titel VARCHAR(255),
+                ansoeger VARCHAR(255),
+                marknr VARCHAR(255),
+                cvr VARCHAR(255),
                 startaar INTEGER,
                 tilsagnsaa INTEGER,
                 slutaar INTEGER,
                 startdato DATE,
                 slutdato DATE,
-                ordning TEXT,
-                budget TEXT,
-                indsats TEXT,
-                projektn TEXT,
-                a_runde TEXT,
-                afgoer_fase2 TEXT,
-                projektgodk TEXT,
-                geometry GEOMETRY(POLYGON, 25832)
+                ordning VARCHAR(255),
+                budget NUMERIC,
+                indsats VARCHAR(255),
+                projektn VARCHAR(255),
+                a_runde VARCHAR(255),
+                afgoer_fase2 VARCHAR(255),
+                projektgodk VARCHAR(255),
+                area_ha FLOAT,
+                geometry GEOMETRY(MULTIPOLYGON, 25832)
+            );
+            
+            CREATE TABLE IF NOT EXISTS water_projects_combined (
+                id SERIAL PRIMARY KEY,
+                geometry GEOMETRY(MULTIPOLYGON, 25832)
             );
             
             CREATE INDEX IF NOT EXISTS water_projects_geometry_idx 
@@ -223,6 +228,9 @@ class WaterProjects(Source):
             
             CREATE INDEX IF NOT EXISTS water_projects_layer_idx 
             ON water_projects (layer_name);
+            
+            CREATE INDEX IF NOT EXISTS water_projects_combined_geometry_idx 
+            ON water_projects_combined USING GIST (geometry);
         """)
 
     async def _insert_batch(self, client, features):
@@ -347,6 +355,31 @@ class WaterProjects(Source):
                 except Exception as e:
                     logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                     continue
+        
+        # Add combined layer creation at the end
+        if self.create_combined:
+            try:
+                logger.info("Creating combined layer...")
+                await client.execute("TRUNCATE TABLE water_projects_combined")
+                
+                await client.execute("""
+                    INSERT INTO water_projects_combined (geometry)
+                    SELECT ST_Multi(ST_Union(geometry))
+                    FROM (
+                        SELECT ST_Buffer(geometry, 0) as geometry
+                        FROM water_projects
+                        WHERE geometry IS NOT NULL
+                    ) cleaned
+                """, timeout=self.combined_timeout)
+                
+                combined_count = await client.fetchval("""
+                    SELECT COUNT(*) FROM water_projects_combined
+                """)
+                logger.info(f"Created combined layer with {combined_count} multipolygon features")
+                
+            except Exception as e:
+                logger.error(f"Error creating combined layer: {str(e)}")
+                logger.error("Combined layer creation failed, but individual layers were synced successfully")
         
         return total_processed
 
