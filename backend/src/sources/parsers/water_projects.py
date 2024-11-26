@@ -236,7 +236,7 @@ class WaterProjects(Source):
                 budget NUMERIC,
                 indsats TEXT,
                 projektn TEXT,
-                a_runde TEXT,
+                a_runde INTEGER,
                 afgoer_fase2 TEXT,
                 projektgodk TEXT,
                 geometry GEOMETRY(GEOMETRY, 25832),
