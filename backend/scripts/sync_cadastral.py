@@ -53,8 +53,15 @@ async def main() -> Optional[int]:
         'user': os.getenv('DB_USER'),
         'password': os.getenv('DB_PASSWORD'),
         'port': int(os.getenv('DB_PORT', '5432')),
-        'ssl': os.getenv('DB_SSL', 'require'),  # Add SSL for Cloud SQL
-        'command_timeout': 60  # Add command timeout
+        'ssl': os.getenv('DB_SSL', 'require'),
+        'command_timeout': 14400,  # 4 hours (matching task_timeout)
+        'server_settings': {
+            'tcp_keepalives_idle': '30',
+            'tcp_keepalives_interval': '10',
+            'tcp_keepalives_count': '3',
+            'statement_timeout': '14400000',   # 4 hours in milliseconds
+            'idle_in_transaction_session_timeout': '14400000'  # 4 hours
+        }
     }
     
     if not all([db_config['host'], db_config['database'], 
@@ -63,22 +70,27 @@ async def main() -> Optional[int]:
     
     conn = None
     try:
-        # Connect with SSL and timeout
-        conn = await asyncpg.connect(**db_config)
-        logger.info("Database connection established")
+        # Create connection pool instead of single connection
+        pool = await asyncpg.create_pool(
+            min_size=3,
+            max_size=10,
+            **db_config
+        )
+        logger.info("Database connection pool established")
         
-        cadastral = Cadastral(SOURCES["cadastral"])
-        total_synced = await cadastral.sync(conn)
-        logger.info(f"Total records synced: {total_synced:,}")
-        return total_synced
+        async with pool.acquire() as conn:
+            cadastral = Cadastral(SOURCES["cadastral"])
+            total_synced = await cadastral.sync(conn)
+            logger.info(f"Total records synced: {total_synced:,}")
+            return total_synced
         
     except Exception as e:
         logger.error(f"Error during sync: {str(e)}")
         raise
     finally:
-        if conn:
-            await conn.close()
-            logger.info("Database connection closed")
+        if 'pool' in locals():
+            await pool.close()
+            logger.info("Database connection pool closed")
 
 if __name__ == "__main__":
     try:
