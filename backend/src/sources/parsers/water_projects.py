@@ -289,24 +289,21 @@ class WaterProjects(Source):
     async def sync(self, client):
         """Sync water projects data"""
         logger.info("Starting water projects sync...")
-        start_time = datetime.now()
         
         await self._create_tables(client)
-        logger.info("Database tables created/verified")
-        
-        # Clear existing data
-        await client.execute("TRUNCATE TABLE water_projects")
-        logger.info("Existing data cleared from water_projects table")
-        
         total_processed = 0
         
         async with aiohttp.ClientSession(headers=self.headers) as session:
             for layer in self.layers:
                 try:
                     logger.info(f"\nProcessing layer: {layer}")
+                    
+                    # Use the correct URL based on the layer
+                    base_url = self.url_mapping.get(layer, self.config['url'])
+                    
                     # Get initial batch to determine total count
                     params = self._get_params(layer, 0)
-                    async with session.get(self.config['url'], params=params) as response:
+                    async with session.get(base_url, params=params) as response:
                         if response.status != 200:
                             logger.error(f"Failed to fetch {layer}. Status: {response.status}")
                             error_text = await response.text()
@@ -350,13 +347,6 @@ class WaterProjects(Source):
                 except Exception as e:
                     logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                     continue
-        
-        end_time = datetime.now()
-        duration = end_time - start_time
-        logger.info(f"\nSync completed:")
-        logger.info(f"- Total records processed: {total_processed:,}")
-        logger.info(f"- Total runtime: {duration}")
-        logger.info(f"- Average processing rate: {total_processed/duration.total_seconds():.1f} records/second")
         
         return total_processed
 
