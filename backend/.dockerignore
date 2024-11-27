@@ -6,6 +6,24 @@ __pycache__
 env/
 venv/
 .env
+
+# Tests
+tests/
+test_*.py
+.coverage
+htmlcov/
+pytest_cache/
+.pytest_cache/
+
+# Logs and debugging
 *.log
+debug/
+logs/
+
+# Version control
 .git/
 .gitignore
+
+# Development tools
+cloud-sql-proxy
+test_wfs.py
