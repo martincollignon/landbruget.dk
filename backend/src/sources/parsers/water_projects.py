@@ -452,12 +452,12 @@ class WaterProjects(Source):
                     # Clear existing combined data
                     await client.execute("TRUNCATE water_projects_combined")
                     
-                    # Dissolve all geometries into one
+                    # First dissolve all geometries, then split into individual polygons
                     await client.execute("""
                         INSERT INTO water_projects_combined (geometry)
-                        SELECT ST_Multi(ST_Union(geometry))
+                        SELECT ST_Multi(geom) as geometry
                         FROM (
-                            SELECT (ST_Dump(geometry)).geom as geometry 
+                            SELECT (ST_Dump(ST_Union(geometry))).geom as geom
                             FROM water_projects 
                             WHERE geometry IS NOT NULL
                         ) as subquery;
@@ -467,7 +467,7 @@ class WaterProjects(Source):
                     combined_count = await client.fetchval(
                         "SELECT COUNT(*) FROM water_projects_combined"
                     )
-                    logger.info(f"Created combined layer with {combined_count} features")
+                    logger.info(f"Created combined layer with {combined_count} individual polygons")
                     
                 except Exception as e:
                     logger.error(f"Error creating combined layer: {str(e)}", exc_info=True)
