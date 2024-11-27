@@ -46,21 +46,44 @@ class WetlandAnalysis(Source):
             # Run the analysis
             analysis_query = """
             WITH 
+            valid_cadastral AS (
+                SELECT 
+                    bfe_number,
+                    -- Make valid and clean up any geometry issues
+                    ST_MakeValid(ST_Buffer(geometry, 0)) as geometry
+                FROM cadastral_properties
+            ),
+            valid_wetlands AS (
+                SELECT 
+                    -- Make valid and clean up any geometry issues
+                    ST_MakeValid(ST_Buffer(geometry, 0)) as geometry
+                FROM wetlands
+            ),
+            valid_water_projects AS (
+                SELECT 
+                    -- Make valid and clean up any geometry issues
+                    ST_MakeValid(ST_Buffer(geometry, 0)) as geometry
+                FROM water_projects_combined
+            ),
             bfe_wetlands AS (
                 SELECT 
                     cp.bfe_number,
                     cp.geometry as bfe_geometry,
-                    ST_Intersection(cp.geometry, w.geometry) as wetland_geometry
-                FROM cadastral_properties cp
-                LEFT JOIN wetlands w ON ST_Intersects(cp.geometry, w.geometry)
+                    -- Use ST_MakeValid on the intersection result
+                    ST_MakeValid(ST_Intersection(cp.geometry, w.geometry)) as wetland_geometry
+                FROM valid_cadastral cp
+                LEFT JOIN valid_wetlands w ON ST_Intersects(cp.geometry, w.geometry)
+                WHERE ST_IsValid(cp.geometry) AND (w.geometry IS NULL OR ST_IsValid(w.geometry))
             ),
             wetland_projects AS (
                 SELECT 
                     bw.bfe_number,
-                    ST_Intersection(bw.wetland_geometry, wpc.geometry) as wetland_project_geometry
+                    -- Use ST_MakeValid on the intersection result
+                    ST_MakeValid(ST_Intersection(bw.wetland_geometry, wpc.geometry)) as wetland_project_geometry
                 FROM bfe_wetlands bw
-                LEFT JOIN water_projects_combined wpc 
+                LEFT JOIN valid_water_projects wpc 
                 ON ST_Intersects(bw.wetland_geometry, wpc.geometry)
+                WHERE ST_IsValid(bw.wetland_geometry) AND (wpc.geometry IS NULL OR ST_IsValid(wpc.geometry))
             )
             INSERT INTO bfe_wetland_analysis (
                 bfe_number, wetland_share_pct, wetland_project_share_pct, 
@@ -82,12 +105,13 @@ class WetlandAnalysis(Source):
                 CAST(COALESCE(ST_Area(ST_Union(wp.wetland_project_geometry)), 0) AS NUMERIC(20,2)) as wetland_project_area_m2,
                 CAST((ST_Area(bw.bfe_geometry) - 
                     COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0)) AS NUMERIC(20,2)) as non_wetland_area_m2,
-                bw.bfe_geometry,
-                ST_Union(bw.wetland_geometry) as wetland_geometry,
-                ST_Union(wp.wetland_project_geometry) as wetland_project_geometry,
-                ST_Difference(bw.bfe_geometry, ST_Union(bw.wetland_geometry)) as non_wetland_geometry
+                ST_MakeValid(bw.bfe_geometry) as bfe_geometry,
+                ST_MakeValid(ST_Union(bw.wetland_geometry)) as wetland_geometry,
+                ST_MakeValid(ST_Union(wp.wetland_project_geometry)) as wetland_project_geometry,
+                ST_MakeValid(ST_Difference(bw.bfe_geometry, ST_Union(bw.wetland_geometry))) as non_wetland_geometry
             FROM bfe_wetlands bw
             LEFT JOIN wetland_projects wp ON bw.bfe_number = wp.bfe_number
+            WHERE ST_IsValid(bw.bfe_geometry)
             GROUP BY bw.bfe_number, bw.bfe_geometry
             ON CONFLICT (bfe_number) 
             DO UPDATE SET 
