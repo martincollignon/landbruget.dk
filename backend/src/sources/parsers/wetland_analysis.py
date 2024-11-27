@@ -71,17 +71,17 @@ class WetlandAnalysis(Source):
             )
             SELECT 
                 bw.bfe_number,
-                ROUND((COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0) / 
-                    NULLIF(ST_Area(bw.bfe_geometry), 0) * 100)::numeric, 2) as wetland_share_pct,
-                ROUND((COALESCE(ST_Area(ST_Union(wp.wetland_project_geometry)), 0) / 
-                    NULLIF(ST_Area(ST_Union(bw.wetland_geometry)), 0) * 100)::numeric, 2) as wetland_project_share_pct,
-                ROUND((ST_Area(bw.bfe_geometry) - COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0)) / 
-                    ST_Area(bw.bfe_geometry) * 100::numeric, 2) as non_wetland_share_pct,
-                ROUND(ST_Area(bw.bfe_geometry)::numeric, 2) as total_area_m2,
-                ROUND(COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0)::numeric, 2) as wetland_area_m2,
-                ROUND(COALESCE(ST_Area(ST_Union(wp.wetland_project_geometry)), 0)::numeric, 2) as wetland_project_area_m2,
-                ROUND((ST_Area(bw.bfe_geometry) - 
-                    COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0))::numeric, 2) as non_wetland_area_m2,
+                CAST(COALESCE(ST_Area(ST_Union(bw.wetland_geometry)) / 
+                    NULLIF(ST_Area(bw.bfe_geometry), 0) * 100, 0) AS NUMERIC(5,2)) as wetland_share_pct,
+                CAST(COALESCE(ST_Area(ST_Union(wp.wetland_project_geometry)) / 
+                    NULLIF(ST_Area(ST_Union(bw.wetland_geometry)), 0) * 100, 0) AS NUMERIC(5,2)) as wetland_project_share_pct,
+                CAST((ST_Area(bw.bfe_geometry) - COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0)) / 
+                    ST_Area(bw.bfe_geometry) * 100 AS NUMERIC(5,2)) as non_wetland_share_pct,
+                CAST(ST_Area(bw.bfe_geometry) AS NUMERIC(20,2)) as total_area_m2,
+                CAST(COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0) AS NUMERIC(20,2)) as wetland_area_m2,
+                CAST(COALESCE(ST_Area(ST_Union(wp.wetland_project_geometry)), 0) AS NUMERIC(20,2)) as wetland_project_area_m2,
+                CAST((ST_Area(bw.bfe_geometry) - 
+                    COALESCE(ST_Area(ST_Union(bw.wetland_geometry)), 0)) AS NUMERIC(20,2)) as non_wetland_area_m2,
                 bw.bfe_geometry,
                 ST_Union(bw.wetland_geometry) as wetland_geometry,
                 ST_Union(wp.wetland_project_geometry) as wetland_project_geometry,
