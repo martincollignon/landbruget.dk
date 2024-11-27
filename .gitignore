@@ -67,3 +67,25 @@ test_cadastral.log
 cloud-sql-proxy
 backend/test_wfs.py
 backend/tests/
+backend/test_*.py
+*.test.js
+*.spec.js
+coverage/
+.coverage
+htmlcov/
+pytest_cache/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+
+# Logs and debugging
+*.log
+debug/
+logs/
+cloud-sql-proxy
+cadastral_sync.log
+test_cadastral.log
+
+# Development tools
+cloud-sql-proxy
+backend/test_wfs.py

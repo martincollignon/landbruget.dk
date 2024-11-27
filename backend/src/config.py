@@ -35,5 +35,13 @@ SOURCES = {
         "enabled": True,
         "create_combined": True,
         "combined_timeout": 3600
+    },
+    "wetland_analysis": {
+        "name": "Wetland Analysis",
+        "type": "analysis",
+        "description": "Analysis of wetlands and water projects per cadastral property",
+        "frequency": "weekly",
+        "enabled": True,
+        "depends_on": ["cadastral", "wetlands", "water_projects"]
     }
 }

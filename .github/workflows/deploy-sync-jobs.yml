@@ -37,6 +37,11 @@ jobs:
             memory: 4Gi
             secrets: DB_PASSWORD=db-password:latest
             sync_type: water_projects
+          - name: wetland-analysis
+            cpu: 2
+            memory: 4Gi
+            secrets: DB_PASSWORD=db-password:latest
+            sync_type: wetland_analysis
       fail-fast: false
 
     steps:
