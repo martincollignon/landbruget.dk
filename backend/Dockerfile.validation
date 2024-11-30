@@ -7,14 +7,14 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     python3-pip \
     python3-venv \
-    python3-distutils \  # Add this line
+    python3-distutils \
     gcc \
     g++ \
     procps \
     libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
-
+# Create and use virtual environment
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
