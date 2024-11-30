@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'backend/dataflow/**'
+  workflow_dispatch:
 
 jobs:
   sync-to-gcs:
