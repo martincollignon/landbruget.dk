@@ -64,7 +64,11 @@ jobs:
     - name: Build and Push Container
       run: |
         cd backend
-        gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }} . --quiet
+        if [[ "${{ matrix.service.name }}" == "geometry-validation" ]]; then
+          gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.validation . --quiet
+        else
+          gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.sync . --quiet
+        fi
 
     - name: Deploy Cloud Run Job
       run: |
