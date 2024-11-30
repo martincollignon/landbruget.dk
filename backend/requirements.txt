@@ -4,6 +4,11 @@ uvicorn>=0.15.0
 
 # Data Processing
 shapely>=1.7.0
+geopandas>=0.9.0
+pandas>=1.3.0
+numpy>=1.21.0
+pyproj>=3.0.0
+fiona>=1.8.0
 tqdm>=4.62.0
 psutil==5.9.7
 pyarrow>=12.0.0
