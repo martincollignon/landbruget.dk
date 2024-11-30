@@ -45,5 +45,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY dataflow ./dataflow
 COPY src ./src
+COPY scripts ./scripts
 
 ENTRYPOINT ["python", "dataflow/validate_geometries.py"]
