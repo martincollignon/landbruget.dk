@@ -1,0 +1,31 @@
+name: Sync Dataflow Scripts
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/dataflow/**'
+
+jobs:
+  sync-to-gcs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+        service_account: '${{ secrets.GCP_SA_EMAIL }}'
+
+    - name: 'Set up Cloud SDK'
+      uses: 'google-github-actions/setup-gcloud@v2'
+
+    - name: 'Upload Dataflow Scripts'
+      run: |
+        cd backend
+        gsutil -m cp -r dataflow/* gs://landbrugsdata-raw-data/dataflow/ 
