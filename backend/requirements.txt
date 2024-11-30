@@ -1,5 +1,5 @@
 # Cloud Storage (moved to top)
-apache-beam[gcp]==2.54.0
+apache-beam[gcp]==2.61.0
 
 # API Framework
 fastapi>=0.68.0
