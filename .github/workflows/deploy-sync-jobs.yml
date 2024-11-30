@@ -45,7 +45,6 @@ jobs:
           - name: geometry-validation
             cpu: 4
             memory: 8Gi
-            secrets: ""
             sync_type: validate_geometries
       fail-fast: false
 
