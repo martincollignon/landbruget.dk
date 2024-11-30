@@ -6,7 +6,8 @@ SOURCES = {
         "url": "https://geodata.fvm.dk/geoserver/wfs",
         "layer": "Marker:Marker_seneste",
         "frequency": "weekly",
-        "enabled": True
+        "enabled": True,
+        "bucket": "landbrugsdata-raw-data"
     },
     "wetlands": {
         "name": "Danish Wetlands Map",
@@ -15,15 +16,17 @@ SOURCES = {
         "url": "https://wfs2-miljoegis.mim.dk/natur/wfs",
         "layer": "natur:kulstof2022",
         "frequency": "static",
-        "enabled": True
+        "enabled": True,
+        "bucket": "landbrugsdata-raw-data"
     },
-        "cadastral": {
+    "cadastral": {
         "name": "Danish Cadastral Properties",
         "type": "wfs",
         "description": "Current real estate property boundaries",
         "url": "https://wfs.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWFS/1.0.0/WFS",
         "frequency": "weekly",
-        "enabled": True
+        "enabled": True,
+        "bucket": "landbrugsdata-raw-data"
     },
     "water_projects": {
         "name": "Danish Water Projects",
@@ -34,14 +37,7 @@ SOURCES = {
         "frequency": "weekly",
         "enabled": True,
         "create_combined": True,
-        "combined_timeout": 3600
-    },
-    "wetland_analysis": {
-        "name": "Wetland Analysis",
-        "type": "analysis",
-        "description": "Analysis of wetlands and water projects per cadastral property",
-        "frequency": "weekly",
-        "enabled": True,
-        "depends_on": ["cadastral", "wetlands", "water_projects"]
+        "combined_timeout": 3600,
+        "bucket": "landbrugsdata-raw-data"
     }
 }
