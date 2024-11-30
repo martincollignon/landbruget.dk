@@ -45,6 +45,7 @@ jobs:
           - name: geometry-validation
             cpu: 4
             memory: 8Gi
+            secrets: DB_PASSWORD=db-password:latest
             sync_type: validate_geometries
       fail-fast: false
 
