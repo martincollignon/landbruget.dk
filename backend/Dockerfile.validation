@@ -27,7 +27,8 @@ ENV C_INCLUDE_PATH=/usr/include/gdal
 WORKDIR /install
 COPY requirements.txt .
 RUN pip install --no-cache-dir setuptools wheel
-RUN pip install --no-cache-dir apache-beam[gcp]==2.54.0 -r requirements.txt
+RUN pip install --no-cache-dir 'numpy>=1.26.0'
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0
