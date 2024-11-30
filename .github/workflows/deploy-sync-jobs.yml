@@ -42,6 +42,11 @@ jobs:
             memory: 4Gi
             secrets: DB_PASSWORD=db-password:latest
             sync_type: wetland_analysis
+          - name: geometry-validation
+            cpu: 4
+            memory: 8Gi
+            secrets: ""
+            sync_type: validate_geometries
       fail-fast: false
 
     steps:
