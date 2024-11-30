@@ -1,9 +1,12 @@
+# Cloud Storage (moved to top)
+apache-beam[gcp]==2.54.0
+
 # API Framework
 fastapi>=0.68.0
 uvicorn>=0.15.0
 
 # Data Processing
-numpy>=1.26.0
+numpy>=1.26.4
 shapely>=2.0.0
 geopandas>=0.14.0
 pandas>=2.2.0
@@ -18,12 +21,12 @@ aiohttp>=3.8.0
 
 # Database
 backoff>=1.10.0
+
 # Data Validation
 pydantic>=1.8.0
 
 # Cloud Storage
 google-cloud-storage>=2.0.0
-apache-beam[gcp]==2.54.0
 
 # Environment Variables
 python-dotenv>=0.19.0
