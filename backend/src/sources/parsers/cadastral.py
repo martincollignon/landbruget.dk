@@ -6,18 +6,27 @@ from datetime import datetime
 import logging
 import aiohttp
 from shapely.geometry import Polygon, MultiPolygon
-from shapely.wkt import dumps as wkt_dumps
-import asyncpg
-from dotenv import load_dotenv
-from tqdm import tqdm
-import psutil
+from shapely import wkt
+import geopandas as gpd
+from google.cloud import storage
 import time
 import backoff
 from aiohttp import ClientError, ClientTimeout
+from dotenv import load_dotenv
+from tqdm import tqdm
+import psutil
+import pandas as pd
 
-from ...base import Source, clean_value
+from ...base import Source
 
 logger = logging.getLogger(__name__)
+
+def clean_value(value):
+    """Clean string values"""
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    return value if value else None
 
 class Cadastral(Source):
     def __init__(self, config):
@@ -126,7 +135,7 @@ class Cadastral(Source):
                 return None
 
             final_geom = MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
-            return wkt_dumps(final_geom)
+            return wkt.dumps(final_geom)
 
         except Exception as e:
             logger.error(f"Error parsing geometry: {str(e)}")
@@ -164,17 +173,11 @@ class Cadastral(Source):
 
     async def _get_total_count(self, session):
         """Get total number of features from first page metadata"""
-        params = {
-            'username': self.username,
-            'password': self.password,
-            'SERVICE': 'WFS',
-            'REQUEST': 'GetFeature',
-            'VERSION': '2.0.0',
-            'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
-            'SRSNAME': 'EPSG:25832',
+        params = self._get_base_params()
+        params.update({
             'startIndex': '0',
             'count': '1'  # Just get one feature to check metadata
-        }
+        })
         
         try:
             logger.info("Getting total count from first page metadata...")
@@ -229,11 +232,6 @@ class Cadastral(Source):
                     content = await response.text()
                     root = ET.fromstring(content)
                     
-                    # Log response metadata
-                    number_matched = root.get('numberMatched', '0')
-                    number_returned = root.get('numberReturned', '0')
-                    logger.info(f"Chunk {start_index}: matched={number_matched}, returned={number_returned}")
-                    
                     features = []
                     for feature_elem in root.findall('.//mat:SamletFastEjendom_Gaeldende', self.namespaces):
                         feature = self._parse_feature(feature_elem)
@@ -247,266 +245,79 @@ class Cadastral(Source):
                 logger.error(f"Error fetching chunk at index {start_index}: {str(e)}")
                 raise
 
-    async def _create_tables(self, conn):
-        """Create necessary database tables"""
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS cadastral_properties (
-                bfe_number INTEGER PRIMARY KEY,
-                business_event TEXT,
-                business_process TEXT,
-                latest_case_id TEXT,
-                id_local TEXT,
-                id_namespace TEXT,
-                registration_from TIMESTAMP WITH TIME ZONE,
-                effect_from TIMESTAMP WITH TIME ZONE,
-                authority TEXT,
-                is_worker_housing BOOLEAN,
-                is_common_lot BOOLEAN,
-                has_owner_apartments BOOLEAN,
-                is_separated_road BOOLEAN,
-                agricultural_notation TEXT,
-                geometry GEOMETRY(MULTIPOLYGON, 25832)
-            );
-            
-            CREATE INDEX IF NOT EXISTS cadastral_properties_geometry_idx 
-            ON cadastral_properties USING GIST (geometry);
-        """)
-
-    async def _insert_batch(self, conn, features):
-        """Insert a batch of features"""
+    async def write_to_storage(self, features, dataset):
+        """Write features to GeoParquet in Cloud Storage"""
         if not features:
-            return 0
+            return
             
         try:
-            # Prepare values for insertion
-            values = []
-            for f in features:
-                values.append((
-                    f.get('bfe_number'),
-                    f.get('business_event'),
-                    f.get('business_process'),
-                    f.get('latest_case_id'),
-                    f.get('id_local'),
-                    f.get('id_namespace'),
-                    f.get('registration_from'),
-                    f.get('effect_from'),
-                    f.get('authority'),
-                    f.get('is_worker_housing'),
-                    f.get('is_common_lot'),
-                    f.get('has_owner_apartments'),
-                    f.get('is_separated_road'),
-                    f.get('agricultural_notation'),
-                    f.get('geometry')
-                ))
-
-            # Insert with conflict handling
-            result = await conn.executemany("""
-                INSERT INTO cadastral_properties (
-                    bfe_number, business_event, business_process, latest_case_id,
-                    id_local, id_namespace, registration_from, effect_from,
-                    authority, is_worker_housing, is_common_lot, has_owner_apartments,
-                    is_separated_road, agricultural_notation, geometry
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 
-                    ST_GeomFromText($15, 25832))
-                ON CONFLICT (bfe_number) DO UPDATE SET
-                    business_event = EXCLUDED.business_event,
-                    business_process = EXCLUDED.business_process,
-                    latest_case_id = EXCLUDED.latest_case_id,
-                    id_local = EXCLUDED.id_local,
-                    id_namespace = EXCLUDED.id_namespace,
-                    registration_from = EXCLUDED.registration_from,
-                    effect_from = EXCLUDED.effect_from,
-                    authority = EXCLUDED.authority,
-                    is_worker_housing = EXCLUDED.is_worker_housing,
-                    is_common_lot = EXCLUDED.is_common_lot,
-                    has_owner_apartments = EXCLUDED.has_owner_apartments,
-                    is_separated_road = EXCLUDED.is_separated_road,
-                    agricultural_notation = EXCLUDED.agricultural_notation,
-                    geometry = EXCLUDED.geometry
-                WHERE EXCLUDED.registration_from >= cadastral_properties.registration_from 
-                    OR cadastral_properties.registration_from IS NULL
-            """, values)
+            # Create DataFrame from features
+            df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
             
-            return len(values)
+            # Convert WKT to shapely geometries
+            geometries = [wkt.loads(f['geometry']) for f in features]
+            
+            # Create GeoDataFrame directly
+            gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
+            
+            # Write to temporary local file
+            temp_file = f"/tmp/{dataset}_current.parquet"
+            gdf.to_parquet(temp_file)
+            
+            # Upload to Cloud Storage
+            storage_client = storage.Client()
+            bucket = storage_client.bucket('landbrugsdata-raw-data')
+            blob = bucket.blob(f'raw/{dataset}/current.parquet')
+            blob.upload_from_filename(temp_file)
+            
+            # Cleanup
+            os.remove(temp_file)
+            
+            logger.info(f"Successfully wrote {len(gdf)} features to storage")
             
         except Exception as e:
-            logger.error(f"Error inserting batch: {str(e)}")
+            logger.error(f"Error writing to storage: {str(e)}")
             raise
 
-    async def sync(self, conn):
-        """Sync cadastral data"""
+    async def sync(self):
+        """Sync cadastral data to Cloud Storage"""
         logger.info("Starting cadastral sync...")
         start_time = datetime.now()
         
-        # Add memory monitoring
-        import psutil
-        process = psutil.Process()
-        initial_memory = process.memory_info().rss / 1024 / 1024
-        logger.info(f"Initial memory usage: {initial_memory:.2f} MB")
-        
-        # Create tables if they don't exist
-        await self._create_tables(conn)
-        
-        # Initialize queues and events
-        feature_queue = asyncio.Queue(maxsize=self.max_concurrent * 2)
-        db_queue = asyncio.Queue(maxsize=self.max_concurrent * 2)
-        fetch_complete = asyncio.Event()
-        processing_complete = asyncio.Event()
-        
-        # Track progress
-        processed_chunks = set()
-        total_processed = 0
-        
-        async def db_worker():
-            """Database worker to handle batch inserts"""
-            try:
-                batch = []
-                while True:
-                    if db_queue.empty() and processing_complete.is_set():
-                        if batch:  # Process any remaining features
-                            inserted = await self._insert_batch(conn, batch)
-                            logger.info(f"Final batch inserted: {inserted} features")
-                        break
-
-                    try:
-                        features = await asyncio.wait_for(db_queue.get(), timeout=1.0)
-                        batch.extend(features)
-                        
-                        if len(batch) >= self.batch_size:
-                            inserted = await self._insert_batch(conn, batch)
-                            logger.info(f"Batch inserted: {inserted} features")
-                            batch = []
-                            
-                        db_queue.task_done()
-                    except asyncio.TimeoutError:
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error in db worker: {str(e)}")
-                        raise
-
-            except Exception as e:
-                logger.error(f"Database worker failed: {str(e)}")
-                raise
-
-        async def process_worker():
-            """Process features from queue"""
-            try:
-                features_batch = []
-                while True:
-                    if feature_queue.empty() and fetch_complete.is_set():
-                        if features_batch:
-                            await db_queue.put(features_batch)
-                        break
-
-                    try:
-                        chunk_idx, features = await asyncio.wait_for(
-                            feature_queue.get(), timeout=1.0
-                        )
-                        
-                        if chunk_idx in processed_chunks:
-                            continue
-                            
-                        features_batch.extend(features)
-                        processed_chunks.add(chunk_idx)
-                        
-                        if len(features_batch) >= self.batch_size:
-                            await db_queue.put(features_batch)
-                            features_batch = []
-                            
-                        feature_queue.task_done()
-                    except asyncio.TimeoutError:
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error in process worker: {str(e)}")
-                        raise
-
-                processing_complete.set()
-            except Exception as e:
-                logger.error(f"Process worker failed: {str(e)}")
-                raise
-
-        async def fetch_worker():
-            """Fetch features from WFS service"""
-            try:
-                async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
-                    # Get total count using first page metadata
-                    params = {
-                        'username': self.username,
-                        'password': self.password,
-                        'SERVICE': 'WFS',
-                        'REQUEST': 'GetFeature',
-                        'VERSION': '2.0.0',
-                        'TYPENAMES': 'mat:SamletFastEjendom_Gaeldende',
-                        'SRSNAME': 'EPSG:25832',
-                        'startIndex': '0',
-                        'count': '1'
-                    }
-                    
-                    logger.info("Getting total count from first page metadata...")
-                    async with session.get(self.config['url'], params=params) as response:
-                        response.raise_for_status()
-                        text = await response.text()
-                        root = ET.fromstring(text)
-                        total_features = int(root.get('numberMatched', '0'))
-                        logger.info(f"Total available features: {total_features:,}")
-
-                    # Create progress bar
-                    pbar = tqdm(total=total_features, desc="Fetching features")
-                    
-                    # Process all chunks
-                    tasks = []
-                    for start_index in range(0, total_features, self.page_size):
-                        task = asyncio.create_task(
-                            self._fetch_chunk(session, start_index)
-                        )
-                        tasks.append((start_index, task))
-
-                    # Process chunks as they complete
-                    for start_index, task in tasks:
-                        try:
-                            features = await task
-                            if features:  # Only process if we got features
-                                await feature_queue.put((start_index, features))
-                                pbar.update(len(features))
-                        except Exception as e:
-                            logger.error(f"Error fetching chunk {start_index}: {str(e)}")
-                            continue
-
-                    pbar.close()
-                    fetch_complete.set()
-                    
-            except Exception as e:
-                logger.error(f"Fetch worker failed: {str(e)}")
-                raise
-
-        try:
-            # Start workers
-            workers = [
-                asyncio.create_task(fetch_worker()),
-                asyncio.create_task(process_worker()),
-                asyncio.create_task(db_worker())
-            ]
-
-            # Wait for all workers to complete
-            await asyncio.gather(*workers)
+        async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
+            # Get total count first
+            total_features = await self._get_total_count(session)
             
-            # Get final count
-            total_count = await conn.fetchval(
-                "SELECT COUNT(*) FROM cadastral_properties"
-            )
-            logger.info(f"Sync completed. Total records in database: {total_count:,}")
+            features = []
+            total_processed = 0
             
-            # Log total runtime
-            end_time = datetime.now()
-            duration = end_time - start_time
-            logger.info(f"Total runtime: {duration}")
+            # Process in batches
+            for start_index in range(0, total_features, self.page_size):
+                try:
+                    chunk = await self._fetch_chunk(session, start_index)
+                    if chunk:
+                        features.extend(chunk)
+                        
+                        # Write batch to storage when we hit batch size
+                        if len(features) >= self.batch_size:
+                            await self.write_to_storage(features, 'cadastral')
+                            total_processed += len(features)
+                            features = []
+                            logger.info(f"Progress: {total_processed:,}/{total_features:,}")
+                            
+                except Exception as e:
+                    logger.error(f"Error processing batch at {start_index}: {str(e)}")
+                    continue
             
-            return total_count
-
-        except Exception as e:
-            logger.error(f"Sync failed: {str(e)}")
-            raise
+            # Write any remaining features
+            if features:
+                await self.write_to_storage(features, 'cadastral')
+                total_processed += len(features)
+            
+            logger.info(f"Sync completed. Total processed: {total_processed:,}")
+            return total_processed
 
     async def fetch(self):
-        """Not implemented - using sync() directly"""
-        raise NotImplementedError("This source uses sync() directly")
+        """Implement abstract method - using sync() instead"""
+        logger.info("Fetch method called - using sync() instead")
+        return await self.sync()

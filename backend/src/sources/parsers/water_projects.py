@@ -1,15 +1,31 @@
 from pathlib import Path
 import asyncio
+import os
 import xml.etree.ElementTree as ET
+from datetime import datetime
 import logging
 import aiohttp
 from shapely.geometry import Polygon, MultiPolygon
-from datetime import datetime
+from shapely import wkt
+import geopandas as gpd
+import pandas as pd
+from google.cloud import storage
+import time
 import backoff
 from aiohttp import ClientError, ClientTimeout
-from ...base import Source, clean_value
+from dotenv import load_dotenv
+from tqdm import tqdm
+
+from ...base import Source
 
 logger = logging.getLogger(__name__)
+
+def clean_value(value):
+    """Clean string values"""
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    return value if value else None
 
 class WaterProjects(Source):
     def __init__(self, config):
@@ -17,9 +33,7 @@ class WaterProjects(Source):
         self.batch_size = 100
         self.max_concurrent = 3
         self.request_timeout = 300
-        
-        self.create_combined = config.get('create_combined', True)
-        self.combined_timeout = config.get('combined_timeout', 3600)
+        self.storage_batch_size = 5000  # Size for storage batches
         
         self.request_timeout_config = ClientTimeout(
             total=self.request_timeout,
@@ -68,34 +82,30 @@ class WaterProjects(Source):
         }
 
     def _parse_geometry(self, geom_elem):
-        """Parse GML geometry into WKT"""
+        """Parse GML geometry into WKT and calculate area"""
         try:
-            # Handle both the_geom and wkb_geometry element names
             gml_ns = '{http://www.opengis.net/gml/3.2}'
             
-            # Find MultiSurface element
             multi_surface = geom_elem.find(f'.//{gml_ns}MultiSurface')
             if multi_surface is None:
                 logger.error("No MultiSurface element found")
                 return None
             
             polygons = []
-            # Process each surface member
             for surface_member in multi_surface.findall(f'.//{gml_ns}surfaceMember'):
                 polygon = surface_member.find(f'.//{gml_ns}Polygon')
                 if polygon is None:
                     continue
                     
-                # Get exterior ring coordinates
                 pos_list = polygon.find(f'.//{gml_ns}posList')
                 if pos_list is None or not pos_list.text:
                     continue
                     
-                # Parse coordinates
                 try:
                     coords = [float(x) for x in pos_list.text.strip().split()]
                     coords = [(coords[i], coords[i+1]) for i in range(0, len(coords), 2)]
-                    polygons.append(Polygon(coords))
+                    if len(coords) >= 4:  # Ensure we have enough coordinates
+                        polygons.append(Polygon(coords))
                 except Exception as e:
                     logger.error(f"Failed to parse coordinates: {str(e)}")
                     continue
@@ -103,7 +113,13 @@ class WaterProjects(Source):
             if not polygons:
                 return None
             
-            return MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
+            geom = MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
+            area_ha = geom.area / 10000  # Convert square meters to hectares
+            
+            return {
+                'wkt': geom.wkt,
+                'area_ha': area_ha
+            }
             
         except Exception as e:
             logger.error(f"Error parsing geometry: {str(e)}")
@@ -112,34 +128,43 @@ class WaterProjects(Source):
     def _parse_feature(self, feature, layer_name):
         """Parse a single feature into a dictionary"""
         try:
-            # Get the namespace from the feature's tag
             namespace = feature.tag.split('}')[0].strip('{')
             
-            # Handle geometry first
             geom_elem = feature.find(f'{{%s}}the_geom' % namespace) or feature.find(f'{{%s}}wkb_geometry' % namespace)
             if geom_elem is None:
                 logger.warning(f"No geometry found in feature for layer {layer_name}")
                 return None
 
-            geometry = self._parse_geometry(geom_elem)
-            if geometry is None:
+            geometry_data = self._parse_geometry(geom_elem)
+            if geometry_data is None:
                 logger.warning(f"Failed to parse geometry for layer {layer_name}")
                 return None
 
-            # Base data
             data = {
                 'layer_name': layer_name,
-                'geometry': geometry
+                'geometry': geometry_data['wkt'],
+                'area_ha': geometry_data['area_ha']
             }
             
-            # Parse all other fields
             for elem in feature:
                 if not elem.tag.endswith(('the_geom', 'wkb_geometry')):
-                    key = elem.tag.split('}')[-1].lower()  # Get the attribute name without namespace
-                    if elem.text:  # Only add non-empty values
-                        data[key] = elem.text.strip()
+                    key = elem.tag.split('}')[-1].lower()
+                    if elem.text:
+                        value = clean_value(elem.text)
+                        if value is not None:
+                            # Convert specific fields
+                            try:
+                                if key in ['area', 'budget']:
+                                    value = float(''.join(c for c in value if c.isdigit() or c == '.'))
+                                elif key in ['startaar', 'tilsagnsaa', 'slutaar']:
+                                    value = int(value)
+                                elif key in ['startdato', 'slutdato']:
+                                    value = pd.to_datetime(value, dayfirst=True)
+                            except (ValueError, TypeError):
+                                logger.warning(f"Failed to convert {key} value: {value}")
+                                value = None
+                            data[key] = value
             
-            logger.debug(f"Parsed fields for layer {layer_name}: {list(data.keys())}")
             return data
             
         except Exception as e:
@@ -164,248 +189,100 @@ class WaterProjects(Source):
                     timeout=self.request_timeout_config
                 ) as response:
                     if response.status != 200:
+                        logger.error(f"Error fetching chunk. Status: {response.status}")
                         error_text = await response.text()
-                        logger.error(f"Error response from server: {error_text[:500]}")
-                        raise ClientError(f"Server returned status {response.status}")
+                        logger.error(f"Error response: {error_text[:500]}")
+                        return None
                     
                     text = await response.text()
-                    logger.debug(f"Raw XML response for {layer} (first 500 chars): {text[:500]}")
+                    root = ET.fromstring(text)
                     
-                    try:
-                        root = ET.fromstring(text)
-                    except ET.ParseError as e:
-                        logger.error(f"XML Parse error for {layer}: {str(e)}")
-                        logger.error(f"Problematic XML: {text[:1000]}")
-                        raise
-                    
-                    # Log the root element and its immediate children
-                    logger.debug(f"Root tag: {root.tag}")
-                    logger.debug("Root's children tags:")
-                    for child in root:
-                        logger.debug(f"- {child.tag}")
-
-                    # Find the correct namespace from the root element
+                    features = []
                     namespaces = {}
                     for elem in root.iter():
                         if '}' in elem.tag:
                             ns_url = elem.tag.split('}')[0].strip('{')
                             namespaces['ns'] = ns_url
                             break
-
-                    features = []
-                    # Use direct tag matching instead of local-name()
+                    
                     for member in root.findall('.//ns:member', namespaces=namespaces):
                         for feature in member:
                             parsed = self._parse_feature(feature, layer)
-                            if parsed and parsed['geometry']:
+                            if parsed and parsed.get('geometry'):
                                 features.append(parsed)
                     
                     return features
                     
             except Exception as e:
-                logger.error(f"Error fetching chunk for {layer} at index {start_index}")
-                logger.error(f"Error details: {type(e).__name__}: {str(e)}")
-                logger.debug("Stack trace:", exc_info=True)
+                logger.error(f"Error fetching chunk: {str(e)}")
                 raise
 
-    async def _create_tables(self, client):
-        """Create necessary database tables"""
-        # Drop existing tables
-        await client.execute("""
-            DROP TABLE IF EXISTS water_projects CASCADE;
-            DROP TABLE IF EXISTS water_projects_combined CASCADE;
-        """)
-        
-        # Create fresh tables
-        await client.execute("""
-            CREATE TABLE water_projects (
-                id SERIAL PRIMARY KEY,
-                layer_name TEXT,
-                area_ha NUMERIC,
-                journalnr TEXT,
-                titel TEXT,
-                ansoeger TEXT,
-                marknr TEXT,
-                cvr INTEGER,
-                startaar INTEGER,
-                tilsagnsaa INTEGER,
-                slutaar INTEGER,
-                startdato DATE,
-                slutdato DATE,
-                ordning TEXT,
-                budget NUMERIC,
-                indsats TEXT,
-                projektn TEXT,
-                a_runde INTEGER,
-                afgoer_fase2 TEXT,
-                projektgodk TEXT,
-                geometry GEOMETRY(GEOMETRY, 25832),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX water_projects_geometry_idx 
-            ON water_projects USING GIST (geometry);
-            
-            CREATE INDEX water_projects_layer_idx 
-            ON water_projects (layer_name);
-            
-            CREATE TABLE water_projects_combined (
-                id SERIAL PRIMARY KEY,
-                geometry GEOMETRY(MULTIPOLYGON, 25832),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-            
-            CREATE INDEX water_projects_combined_geometry_idx 
-            ON water_projects_combined USING GIST (geometry);
-        """)
-
-    async def _insert_batch(self, client, features):
-        """Insert a batch of features"""
+    async def write_to_storage(self, features, dataset):
+        """Write features to GeoParquet in Cloud Storage"""
         if not features:
-            logger.warning("No features to insert in batch")
             return 0
-        
+            
         try:
-            logger.info(f"Preparing to insert batch of {len(features)} features")
+            logger.info(f"Converting {len(features)} features to GeoDataFrame...")
             
-            values = []
-            for f in features:
-                try:
-                    # Handle area fields (multiple possible names)
-                    area_value = (
-                        f.get('AREAL_HA') or 
-                        f.get('IMK_areal') or 
-                        f.get('areal_ha') or 
-                        f.get('imk_areal')
-                    )
-                    try:
-                        area = float(str(area_value).replace(',', '.')) if area_value else None
-                    except (ValueError, TypeError):
-                        area = None
-                        logger.warning(f"Invalid area value: {area_value}")
-
-                    def safe_int(value):
-                        """Convert string to integer, handling None and invalid values"""
-                        if not value:
-                            return None
-                        try:
-                            cleaned = str(value).strip()
-                            return int(cleaned) if cleaned else None
-                        except (ValueError, TypeError):
-                            logger.warning(f"Could not convert to integer: {value}")
-                            return None
-
-                    def safe_date(value):
-                        """Convert string to date, handling multiple formats"""
-                        if not value:
-                            return None
-                        try:
-                            cleaned = str(value).strip()
-                            for fmt in ['%Y-%m-%d', '%d-%m-%Y', '%d/%m/%Y', '%Y/%m/%d']:
-                                try:
-                                    return datetime.strptime(cleaned, fmt).date()
-                                except ValueError:
-                                    continue
-                            logger.warning(f"Could not parse date: {value}")
-                            return None
-                        except (TypeError, AttributeError):
-                            return None
-
-                    def safe_numeric(value):
-                        """Convert string to float, handling commas and invalid values"""
-                        if not value:
-                            return None
-                        try:
-                            cleaned = str(value).strip().replace(',', '.')
-                            return float(cleaned) if cleaned else None
-                        except (ValueError, TypeError):
-                            logger.warning(f"Could not convert to numeric: {value}")
-                            return None
-
-                    # Get WKT
-                    wkt = f['geometry'].wkt if f['geometry'] else None
-                    if not wkt:
-                        logger.warning("Empty geometry found in feature")
-                        continue
-
-                    values.append((
-                        f.get('layer_name'),
-                        area,
-                        f.get('journalnr') or f.get('Journalnr'),
-                        f.get('titel') or f.get('Titel') or f.get('projektn'),
-                        f.get('ansoeger') or f.get('Ansoeger'),
-                        f.get('marknr') or f.get('Marknr'),
-                        safe_int(f.get('cvr') or f.get('CVR')),
-                        safe_int(f.get('startaar') or f.get('Startaar')),
-                        safe_int(f.get('tilsagnsaa') or f.get('Tilsagnsaa')),
-                        safe_int(f.get('slutaar') or f.get('Slutaar')),
-                        safe_date(f.get('startdato') or f.get('Startdato')),
-                        safe_date(f.get('slutdato') or f.get('Slutdato')),
-                        f.get('ordning'),
-                        safe_numeric(f.get('budget') or f.get('Budget')),
-                        f.get('indsats'),
-                        f.get('projektn'),
-                        safe_int(f.get('a_runde')),
-                        f.get('afgoer_fase2'),
-                        f.get('projektgodk'),
-                        wkt
-                    ))
-                    
-                except Exception as e:
-                    logger.error(f"Error preparing feature for insert: {str(e)}")
-                    logger.error(f"Problematic feature: {f}")
-                    continue
-
-            if not values:
-                logger.warning("No valid values to insert after processing")
-                return 0
-
-            logger.info(f"Executing insert for {len(values)} features")
+            # Create DataFrame from features
+            df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
             
-            await client.executemany("""
-                INSERT INTO water_projects (
-                    layer_name, area_ha, journalnr, titel, 
-                    ansoeger, marknr, cvr, startaar, tilsagnsaa, slutaar,
-                    startdato, slutdato, ordning, budget, indsats,
-                    projektn, a_runde, afgoer_fase2, projektgodk,
-                    geometry
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 
-                        $12, $13, $14, $15, $16, $17, $18, $19,
-                        ST_GeomFromText($20, 25832))
-            """, values)
+            # Data validation
+            logger.info("Validating data types...")
+            for col in ['startdato', 'slutdato']:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
             
-            return len(values)
+            for col in ['area_ha', 'budget']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Convert WKT to shapely geometries
+            logger.info("Converting geometries...")
+            geometries = [wkt.loads(f['geometry']) for f in features if f.get('geometry')]
+            
+            # Create GeoDataFrame
+            logger.info("Creating GeoDataFrame...")
+            gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
+            
+            # Log column info
+            logger.debug(f"Columns and their types:\n{gdf.dtypes}")
+            
+            # Write to temporary local file
+            temp_file = f"/tmp/{dataset}_current.parquet"
+            logger.info(f"Writing to temporary file: {temp_file}")
+            gdf.to_parquet(temp_file)
+            
+            # Upload to Cloud Storage
+            logger.info("Uploading to Cloud Storage...")
+            storage_client = storage.Client()
+            bucket = storage_client.bucket('landbrugsdata-raw-data')
+            blob = bucket.blob(f'raw/{dataset}/current.parquet')
+            blob.upload_from_filename(temp_file)
+            
+            # Cleanup
+            os.remove(temp_file)
+            
+            logger.info(f"Successfully wrote {len(gdf)} features to storage")
+            return len(gdf)
             
         except Exception as e:
-            logger.error(f"Error inserting batch: {str(e)}", exc_info=True)
-            if features:
-                logger.error(f"First feature data: {features[0]}")
-            return 0
+            logger.error(f"Error writing to storage: {str(e)}", exc_info=True)
+            raise
 
-    async def sync(self, client):
+    async def sync(self):
         """Sync all water project layers"""
-        total_processed = 0  # Initialize counter
+        total_processed = 0
+        features_batch = []
         
         try:
-            # Create tables if they don't exist
-            await self._create_tables(client)
-            
-            # Clear existing data
-            logger.info("Clearing existing data...")
-            await client.execute("TRUNCATE water_projects")
-            if self.create_combined:
-                await client.execute("TRUNCATE water_projects_combined")
-            
             async with aiohttp.ClientSession(headers=self.headers) as session:
                 for layer in self.layers:
                     logger.info(f"\nProcessing layer: {layer}")
                     try:
-                        # Use the correct URL based on the layer
                         base_url = self.url_mapping.get(layer, self.config['url'])
                         
-                        # Get initial batch to determine total count
                         params = self._get_params(layer, 0)
                         async with session.get(base_url, params=params) as response:
                             if response.status != 200:
@@ -431,67 +308,50 @@ class WaterProjects(Source):
                             for member in root.findall('.//ns:member', namespaces=namespaces):
                                 for feature in member:
                                     parsed = self._parse_feature(feature, layer)
-                                    if parsed and parsed['geometry']:
+                                    if parsed and parsed.get('geometry'):
                                         features.append(parsed)
                             
                             if features:
-                                inserted = await self._insert_batch(client, features)
-                                if inserted:  # Ensure inserted is not None
-                                    total_processed += inserted
-                                logger.info(f"Layer {layer}: inserted {inserted:,} features. Total processed: {total_processed:,}")
+                                features_batch.extend(features)
+                                total_processed += len(features)
+                                
+                                # Write batch if it's large enough
+                                if len(features_batch) >= self.storage_batch_size:
+                                    await self.write_to_storage(features_batch, 'water_projects')
+                                    features_batch = []
+                                
+                                logger.info(f"Layer {layer}: processed {len(features):,} features. Total: {total_processed:,}")
                             
                             # Process remaining batches
                             for start_index in range(self.batch_size, total_features, self.batch_size):
                                 logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
-                                features = await self._fetch_chunk(session, layer, start_index)
-                                if features:
-                                    inserted = await self._insert_batch(client, features)
-                                    if inserted:  # Ensure inserted is not None
-                                        total_processed += inserted
-                                    logger.info(f"Layer {layer}: inserted {inserted:,} features. Total processed: {total_processed:,}")
-                                
+                                chunk = await self._fetch_chunk(session, layer, start_index)
+                                if chunk:
+                                    features_batch.extend(chunk)
+                                    total_processed += len(chunk)
+                                    
+                                    # Write batch if it's large enough
+                                    if len(features_batch) >= self.storage_batch_size:
+                                        await self.write_to_storage(features_batch, 'water_projects')
+                                        features_batch = []
+                                    
+                                    logger.info(f"Layer {layer}: processed {len(chunk):,} features. Total: {total_processed:,}")
+                    
                     except Exception as e:
                         logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                         continue
+
+            # Write any remaining features
+            if features_batch:
+                await self.write_to_storage(features_batch, 'water_projects')
             
-            # Create combined layer if enabled
-            if self.create_combined:
-                logger.info("Creating combined layer...")
-                try:
-                    # Set a longer timeout for the complex spatial operation
-                    await client.execute("SET statement_timeout TO '1h'")
-                    
-                    # Clear existing combined data
-                    await client.execute("TRUNCATE water_projects_combined")
-                    
-                    # First dissolve all geometries, then split into individual polygons
-                    await client.execute("""
-                        INSERT INTO water_projects_combined (geometry)
-                        SELECT ST_Multi(geom) as geometry
-                        FROM (
-                            SELECT (ST_Dump(ST_Union(geometry))).geom as geom
-                            FROM water_projects 
-                            WHERE geometry IS NOT NULL
-                        ) as subquery;
-                    """)
-                    
-                    # Log the result
-                    combined_count = await client.fetchval(
-                        "SELECT COUNT(*) FROM water_projects_combined"
-                    )
-                    logger.info(f"Created combined layer with {combined_count} individual polygons")
-                    
-                except Exception as e:
-                    logger.error(f"Error creating combined layer: {str(e)}", exc_info=True)
-                finally:
-                    # Reset timeout to default
-                    await client.execute("RESET statement_timeout")
-            
+            logger.info(f"Sync completed. Total processed: {total_processed:,}")
             return total_processed
+            
         except Exception as e:
             logger.error(f"Error in sync: {str(e)}", exc_info=True)
-            return total_processed  # Return current count even if error occurs
+            return total_processed
 
     async def fetch(self):
-        """Not implemented - using sync() directly"""
-        raise NotImplementedError("This source uses sync() directly") 
+        """Implement abstract method - using sync() instead"""
+        return await self.sync() 
