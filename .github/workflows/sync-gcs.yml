@@ -1,0 +1,34 @@
+name: Sync Files to GCS
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'dags/**'
+      - 'backend/dataflow/**'
+  workflow_dispatch:
+
+jobs:
+  sync-to-gcs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: 'Set up Cloud SDK'
+      uses: 'google-github-actions/setup-gcloud@v2'
+
+    - name: 'Upload Files'
+      run: |
+        # Upload everything to our bucket
+        gsutil -m cp -r dags/* gs://landbrugsdata-raw-data/dags/
+        cd backend
+        gsutil -m cp -r dataflow/* gs://landbrugsdata-raw-data/dataflow/
