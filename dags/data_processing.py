@@ -38,9 +38,6 @@ with DAG(
             'disk_size_gb': 100,
             'region': 'europe-west1',
             'temp_location': 'gs://landbrugsdata-processing/temp',
-            'setup_file': None,
-            'requirements_file': None,
-            'python_setup_file': None,
             'sdk_container_image': 'gcr.io/landbrugsdata-1/dataflow-processing:latest'
         },
         location='europe-west1',
