@@ -13,14 +13,14 @@ RUN apt-get update && apt-get install -y \
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-# Install Apache Beam with GCP support first (as recommended in the docs)
-RUN pip install 'apache-beam[gcp]==2.60.0'
-
-# Copy and install additional requirements
+# Copy requirements first for better caching
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-# Copy Dataflow scripts
-COPY dataflow/validate_geometries.py /app/validate_geometries.py
+# Copy the entire package structure
+COPY dataflow /app/dataflow
+COPY setup.py /app/setup.py
 
+# Install the package in development mode
 WORKDIR /app
+RUN pip install -e .

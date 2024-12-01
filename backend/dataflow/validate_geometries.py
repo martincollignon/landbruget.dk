@@ -2,6 +2,8 @@
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 import logging
+import geopandas as gpd
+import pandas as pd
 
 class ValidateGeometriesOptions(PipelineOptions):
     @classmethod
