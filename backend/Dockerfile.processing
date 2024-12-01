@@ -17,10 +17,9 @@ ENV C_INCLUDE_PATH=/usr/include/gdal
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-# Copy the entire package structure
+# Copy the dataflow directory (which includes setup.py)
 COPY dataflow /app/dataflow
-COPY setup.py /app/setup.py
 
 # Install the package in development mode
-WORKDIR /app
+WORKDIR /app/dataflow
 RUN pip install -e .
