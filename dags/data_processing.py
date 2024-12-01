@@ -14,6 +14,19 @@ default_args = {
     'region': 'europe-west1'
 }
 
+dataflow_options = {
+    'project': default_args['project_id'],
+    'input_bucket': 'landbrugsdata-raw-data',
+    'output_bucket': 'landbrugsdata-processed-data',
+    'runner': 'DataflowRunner',
+    'max_num_workers': 4,
+    'machine_type': 'n1-standard-4',
+    'disk_size_gb': 100,
+    'region': 'europe-west1',
+    'temp_location': 'gs://landbrugsdata-processing/temp',
+    'sdk_container_image': 'gcr.io/landbrugsdata-1/dataflow-processing:latest'
+}
+
 with DAG(
     'data_processing',
     default_args=default_args,
@@ -23,24 +36,44 @@ with DAG(
     tags=['landbrugsdata', 'processing']
 ) as dag:
     
-    validate_task = DataflowCreatePythonJobOperator(
-        task_id='validate_test',
-        py_file='gs://landbrugsdata-processing/dataflow/validate_geometries.py',
-        job_name=f'validate-test-{{{{ds_nodash}}}}',
+    validate_cadastral = DataflowCreatePythonJobOperator(
+        task_id='validate_cadastral',
+        py_file='gs://landbrugsdata-processing/dataflow/validate_cadastral.py',
+        job_name=f'validate-cadastral-{{{{ds_nodash}}}}',
         options={
-            'project': default_args['project_id'],
-            'dataset': 'cadastral',
-            'input_bucket': 'landbrugsdata-raw-data',
-            'output_bucket': 'landbrugsdata-processed-data',
-            'runner': 'DataflowRunner',
-            'max_num_workers': 4,
-            'machine_type': 'n1-standard-4',
-            'disk_size_gb': 100,
-            'region': 'europe-west1',
-            'temp_location': 'gs://landbrugsdata-processing/temp',
-            'sdk_container_image': 'gcr.io/landbrugsdata-1/dataflow-processing:latest'
+            **dataflow_options,
+            'dataset': 'cadastral'
         },
         location='europe-west1',
         wait_until_finished=True,
         gcp_conn_id='google_cloud_default'
     )
+
+    validate_wetlands = DataflowCreatePythonJobOperator(
+        task_id='validate_wetlands',
+        py_file='gs://landbrugsdata-processing/dataflow/validate_wetlands.py',
+        job_name=f'validate-wetlands-{{{{ds_nodash}}}}',
+        options={
+            **dataflow_options,
+            'dataset': 'wetlands'
+        },
+        location='europe-west1',
+        wait_until_finished=True,
+        gcp_conn_id='google_cloud_default'
+    )
+
+    validate_water_projects = DataflowCreatePythonJobOperator(
+        task_id='validate_water_projects',
+        py_file='gs://landbrugsdata-processing/dataflow/validate_water_projects.py',
+        job_name=f'validate-water-projects-{{{{ds_nodash}}}}',
+        options={
+            **dataflow_options,
+            'dataset': 'water_projects'
+        },
+        location='europe-west1',
+        wait_until_finished=True,
+        gcp_conn_id='google_cloud_default'
+    )
+
+    # All tasks can run in parallel
+    [validate_cadastral, validate_wetlands, validate_water_projects]
