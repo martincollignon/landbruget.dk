@@ -94,16 +94,16 @@ class ValidateAndOptimize(beam.DoFn):
         
         yield {'dataset': dataset, 'data': gdf, 'stats': stats}
 
-def run(argv=None):
-    pipeline_options = ValidateGeometriesOptions(argv)
+def run():
+    pipeline_options = PipelineOptions()
     options = pipeline_options.view_as(ValidateGeometriesOptions)
-    
+
     with beam.Pipeline(options=pipeline_options) as p:
         (p 
-         | 'Create Dataset' >> beam.Create([options.dataset])
-         | 'Read Data' >> beam.Map(lambda dataset: read_dataset(dataset, options.input_bucket))
+         | 'Create Dataset' >> beam.Create([options.dataset.get()])
+         | 'Read Data' >> beam.Map(lambda dataset: read_dataset(dataset, options.input_bucket.get()))
          | 'Validate and Optimize' >> beam.ParDo(ValidateAndOptimize())
-         | 'Write Results' >> beam.Map(lambda element: write_outputs(element, options.output_bucket))
+         | 'Write Results' >> beam.Map(lambda element: write_outputs(element, options.output_bucket.get()))
         )
 
 if __name__ == '__main__':
