@@ -24,5 +24,3 @@ RUN pip install -r /app/requirements.txt
 COPY dataflow/validate_geometries.py /app/validate_geometries.py
 
 WORKDIR /app
-
-ENTRYPOINT ["python", "validate_geometries.py"]
