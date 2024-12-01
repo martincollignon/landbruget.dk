@@ -31,6 +31,7 @@ with DAG(
             py_file='gs://landbrugsdata-processing/dataflow/validate_geometries.py',
             job_name=f'validate-{dataset}-{{{{ds_nodash}}}}',
             options={
+                'project': default_args['project_id'],
                 'dataset': dataset,
                 'input_bucket': 'landbrugsdata-raw-data',
                 'output_bucket': 'landbrugsdata-processed-data',
