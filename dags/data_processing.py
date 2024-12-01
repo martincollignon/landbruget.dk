@@ -27,7 +27,8 @@ with DAG('data_processing',
                 'input_bucket': 'landbrugsdata-raw-data',
                 'output_bucket': 'landbrugsdata-processed-data',
                 'region': 'europe-west1',
-                'temp_location': 'gs://landbrugsdata-processing/temp'
+                'temp_location': 'gs://landbrugsdata-processing/temp',
+                'requirements_file': 'gs://landbrugsdata-processing/dataflow/requirements.txt'
             }
         )
         validation_tasks.append(validate_task)

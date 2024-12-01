@@ -6,6 +6,7 @@ on:
     paths:
       - 'dags/**'
       - 'backend/dataflow/**'
+      - 'backend/requirements.txt'
   workflow_dispatch:
 
 jobs:
@@ -28,7 +29,10 @@ jobs:
 
     - name: 'Upload Files'
       run: |
-        # Upload everything to our bucket
-        gsutil -m cp -r dags/* gs://landbrugsdata-raw-data/dags/
+        # Upload DAGs to Composer
+        gsutil -m cp -r dags/* gs://europe-west1-landbrug-bc7a96db-bucket/dags/
+        
+        # Upload Dataflow scripts and requirements
         cd backend
-        gsutil -m cp -r dataflow/* gs://landbrugsdata-raw-data/dataflow/
+        gsutil -m cp -r dataflow/* gs://landbrugsdata-processing/dataflow/
+        gsutil cp requirements.txt gs://landbrugsdata-processing/dataflow/
