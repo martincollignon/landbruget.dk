@@ -30,12 +30,11 @@ jobs:
 
     - name: 'Upload Files'
       run: |
-        # Upload DAGs to Composer
-        gsutil -m cp -r dags/* gs://europe-west1-landbrug-bc7a96db-bucket/dags/
+        # Sync DAGs to Composer (with deletion of obsolete files)
+        gsutil -m rsync -d -r dags/ gs://landbrugsdata-processing/dags/
         
-        # Upload processing files
+        # Sync processing files
         cd backend
-        gsutil -m cp -r dataflow/* gs://landbrugsdata-processing/dataflow/
+        gsutil -m rsync -d -r dataflow/ gs://landbrugsdata-processing/dataflow/
         gsutil cp requirements.txt gs://landbrugsdata-processing/dataflow/
         gsutil cp Dockerfile.processing gs://landbrugsdata-processing/dataflow/
-        gsutil cp dataflow/setup.py gs://landbrugsdata-processing/dataflow/
