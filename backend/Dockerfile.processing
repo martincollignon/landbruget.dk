@@ -23,12 +23,31 @@ ENV GDAL_VERSION=3.10.0
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-# Install dependencies in specific order
+# Install dependencies in order of change frequency
 WORKDIR /install
-COPY requirements.txt .
+
+# 1. Install build tools (rarely changes)
 RUN pip install --no-cache-dir setuptools wheel
-RUN pip install --no-cache-dir 'numpy>=1.26.4'  # Force newer numpy first
-RUN pip install --no-cache-dir -r requirements.txt  # Then everything else
+
+# 2. Install core dependencies (changes occasionally)
+RUN pip install --no-cache-dir \
+    numpy>=1.26.4 \
+    pandas>=2.2.0 \
+    shapely>=2.0.0 \
+    geopandas>=0.14.0 \
+    pyproj>=3.0.0 \
+    fiona>=1.9.0
+
+# 3. Install processing-specific dependencies (changes occasionally)
+RUN pip install --no-cache-dir \
+    apache-beam[gcp]>=2.50.0,<3.0.0 \
+    google-cloud-storage>=2.0.0 \
+    tqdm>=4.62.0 \
+    psutil==5.9.7
+
+# 4. Copy requirements and install remaining deps (changes most frequently)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.0
