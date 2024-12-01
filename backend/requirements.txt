@@ -30,3 +30,6 @@ python-dotenv>=0.19.0
 
 # Note: Airflow should be installed separately with constraints
 # apache-airflow[gcp]>=2.10.3
+
+fsspec>=2024.10.0
+gcsfs>=2024.10.0
