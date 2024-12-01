@@ -1,7 +1,6 @@
 # backend/dataflow/validate_geometries.py
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
-import logging
 
 class ValidateGeometriesOptions(PipelineOptions):
     @classmethod
@@ -10,37 +9,24 @@ class ValidateGeometriesOptions(PipelineOptions):
         parser.add_argument('--input_bucket')
         parser.add_argument('--output_bucket')
 
-def read_dataset(dataset, input_bucket):
-    # Import here to ensure it's only imported in workers
-    import geopandas as gpd
+def run(argv=None):
+    """Build and run the pipeline."""
+    options = PipelineOptions(argv)
     
-    gdf = gpd.read_parquet(
-        f'gs://{input_bucket}/raw/{dataset}/current.parquet'
-    )
-    return {'dataset': dataset, 'data': gdf}
+    with beam.Pipeline(options=options) as p:
+        (p 
+         | 'Create Dataset' >> beam.Create([options.view_as(ValidateGeometriesOptions).dataset])
+         | 'Read Data' >> beam.Map(lambda dataset: read_dataset(dataset, 
+                                                              options.view_as(ValidateGeometriesOptions).input_bucket))
+         | 'Validate and Optimize' >> beam.ParDo(ValidateAndOptimize())
+         | 'Write Results' >> beam.Map(lambda element: write_outputs(element, 
+                                                                   options.view_as(ValidateGeometriesOptions).output_bucket))
+        )
 
-def write_outputs(element, output_bucket):
-    # Import here to ensure it's available on workers
-    import pandas as pd
-    
-    dataset = element['dataset']
-    gdf = element['data']
-    stats = element['stats']
-    
-    # Write optimized GeoParquet
-    gdf.to_parquet(
-        f'gs://{output_bucket}/validated/{dataset}/current.parquet',
-        compression='zstd',
-        compression_level=3,
-        index=False,
-        row_group_size=100000
-    )
-    
-    # Write validation stats
-    pd.DataFrame([stats]).to_csv(
-        f'gs://{output_bucket}/validated/{dataset}/validation_stats.csv',
-        index=False
-    )
+def read_dataset(dataset, input_bucket):
+    import geopandas as gpd
+    gdf = gpd.read_parquet(f'gs://{input_bucket}/raw/{dataset}/current.parquet')
+    return {'dataset': dataset, 'data': gdf}
 
 class ValidateAndOptimize(beam.DoFn):
     def process(self, element):
@@ -94,18 +80,30 @@ class ValidateAndOptimize(beam.DoFn):
         
         yield {'dataset': dataset, 'data': gdf, 'stats': stats}
 
-def run():
-    pipeline_options = PipelineOptions()
-    options = pipeline_options.view_as(ValidateGeometriesOptions)
-
-    with beam.Pipeline(options=pipeline_options) as p:
-        (p 
-         | 'Create Dataset' >> beam.Create([options.dataset])
-         | 'Read Data' >> beam.Map(lambda dataset: read_dataset(dataset, options.input_bucket))
-         | 'Validate and Optimize' >> beam.ParDo(ValidateAndOptimize())
-         | 'Write Results' >> beam.Map(lambda element: write_outputs(element, options.output_bucket))
-        )
+def write_outputs(element, output_bucket):
+    # Import here to ensure it's available on workers
+    import pandas as pd
+    
+    dataset = element['dataset']
+    gdf = element['data']
+    stats = element['stats']
+    
+    # Write optimized GeoParquet
+    gdf.to_parquet(
+        f'gs://{output_bucket}/validated/{dataset}/current.parquet',
+        compression='zstd',
+        compression_level=3,
+        index=False,
+        row_group_size=100000
+    )
+    
+    # Write validation stats
+    pd.DataFrame([stats]).to_csv(
+        f'gs://{output_bucket}/validated/{dataset}/validation_stats.csv',
+        index=False
+    )
 
 if __name__ == '__main__':
+    import logging
     logging.getLogger().setLevel(logging.INFO)
     run()
