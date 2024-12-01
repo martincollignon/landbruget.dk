@@ -1,0 +1,40 @@
+name: Sync Files to GCS
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'dags/**'
+      - 'backend/dataflow/**'
+      - 'backend/requirements.txt'
+      - 'backend/Dockerfile.processing'
+  workflow_dispatch:
+
+jobs:
+  sync-to-gcs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: 'Set up Cloud SDK'
+      uses: 'google-github-actions/setup-gcloud@v2'
+
+    - name: 'Upload Files'
+      run: |
+        # Upload DAGs to Composer
+        gsutil -m cp -r dags/* gs://europe-west1-landbrug-bc7a96db-bucket/dags/
+        
+        # Upload processing files
+        cd backend
+        gsutil -m cp -r dataflow/* gs://landbrugsdata-processing/dataflow/
+        gsutil cp requirements.txt gs://landbrugsdata-processing/dataflow/
+        gsutil cp Dockerfile.processing gs://landbrugsdata-processing/dataflow/

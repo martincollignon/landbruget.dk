@@ -15,6 +15,7 @@ fiona>=1.9.0
 tqdm>=4.62.0
 psutil==5.9.7
 pyarrow>=12.0.0
+airflow>=2.10.3
 
 # HTTP Client
 aiohttp>=3.8.0
