@@ -1,5 +1,5 @@
 # backend/Dockerfile.validation
-FROM apache/beam_python3.11_sdk:2.61.0
+FROM apache/beam_python3.11_sdk:2.60.0
 
 # Install system dependencies including GDAL
 RUN apt-get update && apt-get install -y \
@@ -14,7 +14,7 @@ ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
 # Install Apache Beam with GCP support first (as recommended in the docs)
-RUN pip install 'apache-beam[gcp]>=2.61.0'
+RUN pip install 'apache-beam[gcp]==2.60.0'
 
 # Copy and install additional requirements
 COPY requirements.txt /app/requirements.txt
