@@ -60,7 +60,7 @@ jobs:
       run: |
         cd backend
         if [[ "${{ matrix.service.name }}" == "geometry-validation" ]]; then
-          gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.validation . --quiet
+          gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.processing . --quiet
         else
           gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.sync . --quiet
         fi
