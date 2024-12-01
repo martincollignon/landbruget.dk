@@ -1,6 +1,7 @@
 # backend/dataflow/validate_geometries.py
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
+import logging
 
 class ValidateGeometriesOptions(PipelineOptions):
     @classmethod
@@ -9,101 +10,71 @@ class ValidateGeometriesOptions(PipelineOptions):
         parser.add_argument('--input_bucket')
         parser.add_argument('--output_bucket')
 
-def run(argv=None):
-    """Build and run the pipeline."""
-    options = PipelineOptions(argv)
+class ReadParquetDoFn(beam.DoFn):
+    def __init__(self, input_bucket):
+        self.input_bucket = input_bucket
     
-    with beam.Pipeline(options=options) as p:
-        (p 
-         | 'Create Dataset' >> beam.Create([options.view_as(ValidateGeometriesOptions).dataset])
-         | 'Read Data' >> beam.Map(lambda dataset: read_dataset(dataset, 
-                                                              options.view_as(ValidateGeometriesOptions).input_bucket))
-         | 'Validate and Optimize' >> beam.ParDo(ValidateAndOptimize())
-         | 'Write Results' >> beam.Map(lambda element: write_outputs(element, 
-                                                                   options.view_as(ValidateGeometriesOptions).output_bucket))
-        )
+    def process(self, dataset):
+        import geopandas as gpd
+        path = f'gs://{self.input_bucket}/raw/{dataset}/current.parquet'
+        logging.info(f'Reading from {path}')
+        gdf = gpd.read_parquet(path)
+        yield {'dataset': dataset, 'data': gdf}
 
-def read_dataset(dataset, input_bucket):
-    import geopandas as gpd
-    gdf = gpd.read_parquet(f'gs://{input_bucket}/raw/{dataset}/current.parquet')
-    return {'dataset': dataset, 'data': gdf}
-
-class ValidateAndOptimize(beam.DoFn):
+class ValidateGeometriesDoFn(beam.DoFn):
     def process(self, element):
-        # Import here to ensure it's available on workers
-        import pandas as pd
-        
-        dataset = element['dataset']
         gdf = element['data']
+        dataset = element['dataset']
         
-        logging.info(f"Processing {dataset} with {len(gdf)} features")
-        
-        # Validate geometries
-        invalid_count = 0
-        fixed_geoms = []
-        
-        for idx, geom in enumerate(gdf.geometry):
-            if not geom.is_valid:
-                invalid_count += 1
-                try:
-                    fixed_geom = geom.buffer(0)
-                    fixed_geoms.append(fixed_geom)
-                except Exception as e:
-                    logging.error(f"Failed to fix geometry at index {idx}: {e}")
-                    fixed_geoms.append(None)
-            else:
-                fixed_geoms.append(geom)
-        
-        # Update geometries
-        gdf.geometry = fixed_geoms
-        
-        # Remove rows with null geometries
-        original_len = len(gdf)
-        gdf = gdf.dropna(subset=['geometry'])
-        dropped_count = original_len - len(gdf)
-        
-        # Optimize numeric columns
-        for col in gdf.columns:
-            if col != 'geometry':
-                if gdf[col].dtype == 'float64':
-                    gdf[col] = gdf[col].astype('float32')
-                elif gdf[col].dtype == 'int64':
-                    gdf[col] = pd.to_numeric(gdf[col], downcast='integer')
-        
+        # Validation logic here
         stats = {
-            'dataset': dataset,
-            'total_features': original_len,
-            'invalid_geometries': invalid_count,
-            'dropped_features': dropped_count,
-            'memory_usage_mb': gdf.memory_usage(deep=True).sum() / 1024**2
+            'total_rows': len(gdf),
+            'valid_geometries': len(gdf[gdf.geometry.is_valid])
         }
         
-        yield {'dataset': dataset, 'data': gdf, 'stats': stats}
+        element['stats'] = stats
+        yield element
 
-def write_outputs(element, output_bucket):
-    # Import here to ensure it's available on workers
-    import pandas as pd
+class WriteResultsDoFn(beam.DoFn):
+    def __init__(self, output_bucket):
+        self.output_bucket = output_bucket
     
-    dataset = element['dataset']
-    gdf = element['data']
-    stats = element['stats']
+    def process(self, element):
+        import pandas as pd
+        dataset = element['dataset']
+        gdf = element['data']
+        stats = element['stats']
+        
+        # Write parquet
+        output_path = f'gs://{self.output_bucket}/validated/{dataset}/current.parquet'
+        logging.info(f'Writing to {output_path}')
+        gdf.to_parquet(
+            output_path,
+            compression='zstd',
+            compression_level=3,
+            index=False,
+            row_group_size=100000
+        )
+        
+        # Write stats
+        stats_path = f'gs://{self.output_bucket}/validated/{dataset}/validation_stats.csv'
+        pd.DataFrame([stats]).to_csv(stats_path, index=False)
+        
+        yield element
+
+def run(argv=None):
+    """Build and run the pipeline."""
+    pipeline_options = PipelineOptions(argv)
+    options = pipeline_options.view_as(ValidateGeometriesOptions)
     
-    # Write optimized GeoParquet
-    gdf.to_parquet(
-        f'gs://{output_bucket}/validated/{dataset}/current.parquet',
-        compression='zstd',
-        compression_level=3,
-        index=False,
-        row_group_size=100000
-    )
-    
-    # Write validation stats
-    pd.DataFrame([stats]).to_csv(
-        f'gs://{output_bucket}/validated/{dataset}/validation_stats.csv',
-        index=False
-    )
+    with beam.Pipeline(options=pipeline_options) as p:
+        (p 
+         | 'Create Dataset' >> beam.Create([options.dataset])
+         | 'Read Parquet' >> beam.ParDo(ReadParquetDoFn(options.input_bucket))
+         | 'Validate Geometries' >> beam.ParDo(ValidateGeometriesDoFn())
+         | 'Write Results' >> beam.ParDo(WriteResultsDoFn(options.output_bucket))
+        )
 
 if __name__ == '__main__':
-    import logging
     logging.getLogger().setLevel(logging.INFO)
     run()
