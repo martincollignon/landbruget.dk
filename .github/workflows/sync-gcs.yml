@@ -38,3 +38,4 @@ jobs:
         gsutil -m cp -r dataflow/* gs://landbrugsdata-processing/dataflow/
         gsutil cp requirements.txt gs://landbrugsdata-processing/dataflow/
         gsutil cp Dockerfile.processing gs://landbrugsdata-processing/dataflow/
+        gsutil cp dataflow/setup.py gs://landbrugsdata-processing/dataflow/

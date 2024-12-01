@@ -40,7 +40,8 @@ with DAG(
                 'disk_size_gb': 100,
                 'region': 'europe-west1',
                 'temp_location': 'gs://landbrugsdata-processing/temp',
-                'requirements_file': 'gs://landbrugsdata-processing/dataflow/requirements.txt'
+                'requirements_file': 'gs://landbrugsdata-processing/dataflow/requirements.txt',
+                'setup_file': 'gs://landbrugsdata-processing/dataflow/setup.py'
             },
             location='europe-west1',
             wait_until_finished=True,
