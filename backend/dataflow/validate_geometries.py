@@ -2,8 +2,6 @@
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 import logging
-import geopandas as gpd
-import pandas as pd
 
 class ValidateGeometriesOptions(PipelineOptions):
     @classmethod
@@ -13,7 +11,7 @@ class ValidateGeometriesOptions(PipelineOptions):
         parser.add_argument('--output_bucket')
 
 def read_dataset(dataset, input_bucket):
-    # Import here to ensure it's available on workers
+    # Import here to ensure it's only imported in workers
     import geopandas as gpd
     
     gdf = gpd.read_parquet(
