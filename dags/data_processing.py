@@ -23,28 +23,27 @@ with DAG(
     tags=['landbrugsdata', 'processing']
 ) as dag:
     
-    datasets = ['cadastral', 'water_projects', 'wetlands']
-    
-    for dataset in datasets:
-        validate_task = DataflowCreatePythonJobOperator(
-            task_id=f'validate_{dataset}',
-            py_file='gs://landbrugsdata-processing/dataflow/validate_geometries.py',
-            job_name=f'validate-{dataset}-{{{{ds_nodash}}}}',
-            options={
-                'project': default_args['project_id'],
-                'dataset': dataset,
-                'input_bucket': 'landbrugsdata-raw-data',
-                'output_bucket': 'landbrugsdata-processed-data',
-                'runner': 'DataflowRunner',
-                'max_num_workers': 4,
-                'machine_type': 'n1-standard-4',
-                'disk_size_gb': 100,
-                'region': 'europe-west1',
-                'temp_location': 'gs://landbrugsdata-processing/temp',
-                'requirements_file': 'gs://landbrugsdata-processing/dataflow/requirements.txt',
-                'setup_file': 'gs://landbrugsdata-processing/dataflow/setup.py'
-            },
-            location='europe-west1',
-            wait_until_finished=True,
-            gcp_conn_id='google_cloud_default'
-        )
+    validate_task = DataflowCreatePythonJobOperator(
+        task_id='validate_test',
+        py_file='gs://landbrugsdata-processing/dataflow/validate_geometries.py',
+        job_name=f'validate-test-{{{{ds_nodash}}}}',
+        options={
+            'project': default_args['project_id'],
+            'dataset': 'cadastral',
+            'input_bucket': 'landbrugsdata-raw-data',
+            'output_bucket': 'landbrugsdata-processed-data',
+            'runner': 'DataflowRunner',
+            'max_num_workers': 4,
+            'machine_type': 'n1-standard-4',
+            'disk_size_gb': 100,
+            'region': 'europe-west1',
+            'temp_location': 'gs://landbrugsdata-processing/temp',
+            'setup_file': None,
+            'requirements_file': None,
+            'python_setup_file': None,
+            'sdk_container_image': 'gcr.io/landbrugsdata-1/dataflow-processing:latest'
+        },
+        location='europe-west1',
+        wait_until_finished=True,
+        gcp_conn_id='google_cloud_default'
+    )
