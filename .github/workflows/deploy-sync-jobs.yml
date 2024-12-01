@@ -22,6 +22,9 @@ jobs:
     strategy:
       matrix:
         service:
+          - name: dataflow-processing
+            cpu: 4
+            memory: 8Gi
           - name: cadastral-sync
             cpu: 4
             memory: 8Gi
@@ -54,7 +57,7 @@ jobs:
     - name: Build and Push Container
       run: |
         cd backend
-        if [[ "${{ matrix.service.name }}" == "geometry-validation" ]]; then
+        if [[ "${{ matrix.service.name }}" == "dataflow-processing" ]]; then
           gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.processing . --quiet
         else
           gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.sync . --quiet
@@ -68,8 +71,8 @@ jobs:
         # Set environment variables including SYNC_TYPE
         ENV_VARS="DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata,SYNC_TYPE=${{ matrix.service.sync_type }}"
         
-        if [[ "${{ matrix.service.name }}" == "geometry-validation" ]]; then
-          # Add bucket arguments for geometry validation
+        if [[ "${{ matrix.service.name }}" == "dataflow-processing" ]]; then
+          # Add bucket arguments for dataflow processing
           ENV_VARS="$ENV_VARS,INPUT_BUCKET=landbrugsdata-raw-data,OUTPUT_BUCKET=landbrugsdata-processed-data"
         fi
         
