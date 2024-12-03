@@ -42,14 +42,14 @@ jobs:
       run: |
         # Deploy sync jobs
         declare -A jobs=(
-          ["cadastral-sync"]="4:8Gi:DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest:cadastral"
-          ["wetlands-sync"]="2:4Gi:DB_PASSWORD=db-password:latest:wetlands"
-          ["water-projects-sync"]="2:4Gi:DB_PASSWORD=db-password:latest:water_projects"
-          ["agricultural-fields-sync"]="4:8Gi:DB_PASSWORD=db-password:latest:agricultural_fields"
+          ["cadastral-sync"]="4|8Gi|DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest|cadastral"
+          ["wetlands-sync"]="2|4Gi|DB_PASSWORD=db-password:latest|wetlands"
+          ["water-projects-sync"]="2|4Gi|DB_PASSWORD=db-password:latest|water_projects"
+          ["agricultural-fields-sync"]="4|8Gi|DB_PASSWORD=db-password:latest|agricultural_fields"
         )
 
         for job in "${!jobs[@]}"; do
-          IFS=':' read -r cpu memory secrets sync_type <<< "${jobs[$job]}"
+          IFS='|' read -r cpu memory secrets sync_type <<< "${jobs[$job]}"
           
           echo "Deploying $job..."
           
@@ -83,3 +83,29 @@ jobs:
           
           echo "Deployment of $job completed successfully"
         done
+
+        # Deploy dataflow processing job
+        echo "Deploying dataflow-processing..."
+        ENV_VARS="INPUT_BUCKET=landbrugsdata-raw-data,OUTPUT_BUCKET=landbrugsdata-processed-data"
+        
+        if ! gcloud run jobs update dataflow-processing \
+          --image gcr.io/$PROJECT_ID/dataflow-processing \
+          --region $REGION \
+          --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+          --set-env-vars="$ENV_VARS" \
+          --cpu=4 \
+          --memory=8Gi \
+          --max-retries=3 \
+          --task-timeout=4h; then
+          
+          echo "Job doesn't exist, creating new job..."
+          gcloud run jobs create dataflow-processing \
+            --image gcr.io/$PROJECT_ID/dataflow-processing \
+            --region $REGION \
+            --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+            --set-env-vars="$ENV_VARS" \
+            --cpu=4 \
+            --memory=8Gi \
+            --max-retries=3 \
+            --task-timeout=4h
+        fi
