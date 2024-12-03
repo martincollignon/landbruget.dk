@@ -14,38 +14,9 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     permissions:
       contents: 'read'
       id-token: 'write'
-
-    strategy:
-      matrix:
-        service:
-          - name: dataflow-processing
-            cpu: 4
-            memory: 8Gi
-          - name: cadastral-sync
-            cpu: 4
-            memory: 8Gi
-            secrets: DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest
-            sync_type: cadastral
-          - name: wetlands-sync
-            cpu: 2
-            memory: 4Gi
-            secrets: DB_PASSWORD=db-password:latest
-            sync_type: wetlands
-          - name: water-projects-sync
-            cpu: 2
-            memory: 4Gi
-            secrets: DB_PASSWORD=db-password:latest
-            sync_type: water_projects
-          - name: agricultural-fields-sync
-            cpu: 4
-            memory: 8Gi
-            secrets: DB_PASSWORD=db-password:latest
-            sync_type: agricultural_fields
-      fail-fast: false
 
     steps:
     - uses: actions/checkout@v4
@@ -59,47 +30,56 @@ jobs:
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
 
-    - name: Build and Push Container
+    - name: Build and Push Containers
       run: |
         cd backend
-        if [[ "${{ matrix.service.name }}" == "dataflow-processing" ]]; then
-          gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.processing . --quiet
-        else
-          gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=${{ matrix.service.name }},_DOCKERFILE=Dockerfile.sync . --quiet
-        fi
+        # Build data-sync container
+        gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=data-sync,_DOCKERFILE=Dockerfile.sync . --quiet
+        # Build dataflow container
+        gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=dataflow-processing,_DOCKERFILE=Dockerfile.processing . --quiet
 
-    - name: Deploy Cloud Run Job
-      if: ${{ matrix.service.name != 'dataflow-processing' }}  # Skip for dataflow-processing
+    - name: Deploy Cloud Run Jobs
       run: |
-        set -e
-        echo "Deploying ${{ matrix.service.name }}..."
-        
-        # Set environment variables including SYNC_TYPE
-        ENV_VARS="DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata,SYNC_TYPE=${{ matrix.service.sync_type }}"
-        
-        if ! gcloud run jobs update ${{ matrix.service.name }} \
-          --image gcr.io/$PROJECT_ID/${{ matrix.service.name }} \
-          --region $REGION \
-          --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-          --set-secrets=${{ matrix.service.secrets }} \
-          --set-env-vars=$ENV_VARS \
-          --cpu=${{ matrix.service.cpu }} \
-          --memory=${{ matrix.service.memory }} \
-          --max-retries=3 \
-          --task-timeout=4h \
-          --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db; then
-          echo "Job doesn't exist, creating new job..."
-          gcloud run jobs create ${{ matrix.service.name }} \
-            --image gcr.io/$PROJECT_ID/${{ matrix.service.name }} \
+        # Deploy sync jobs
+        declare -A jobs=(
+          ["cadastral-sync"]="4:8Gi:DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest:cadastral"
+          ["wetlands-sync"]="2:4Gi:DB_PASSWORD=db-password:latest:wetlands"
+          ["water-projects-sync"]="2:4Gi:DB_PASSWORD=db-password:latest:water_projects"
+          ["agricultural-fields-sync"]="4:8Gi:DB_PASSWORD=db-password:latest:agricultural_fields"
+        )
+
+        for job in "${!jobs[@]}"; do
+          IFS=':' read -r cpu memory secrets sync_type <<< "${jobs[$job]}"
+          
+          echo "Deploying $job..."
+          
+          ENV_VARS="DB_HOST=/cloudsql/$PROJECT_ID:$REGION:landbrugsdata-db,DB_NAME=landbrugsdata,DB_USER=landbrugsdata,SYNC_TYPE=$sync_type"
+          
+          if ! gcloud run jobs update $job \
+            --image gcr.io/$PROJECT_ID/data-sync \
             --region $REGION \
             --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
-            --set-secrets=${{ matrix.service.secrets }} \
-            --set-env-vars=$ENV_VARS \
-            --cpu=${{ matrix.service.cpu }} \
-            --memory=${{ matrix.service.memory }} \
+            --set-secrets="$secrets" \
+            --set-env-vars="$ENV_VARS" \
+            --cpu="$cpu" \
+            --memory="$memory" \
             --max-retries=3 \
             --task-timeout=4h \
-            --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
-        fi
-        
-        echo "Deployment of ${{ matrix.service.name }} completed successfully"
+            --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db; then
+            
+            echo "Job doesn't exist, creating new job..."
+            gcloud run jobs create $job \
+              --image gcr.io/$PROJECT_ID/data-sync \
+              --region $REGION \
+              --service-account="cadastral-sync-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+              --set-secrets="$secrets" \
+              --set-env-vars="$ENV_VARS" \
+              --cpu="$cpu" \
+              --memory="$memory" \
+              --max-retries=3 \
+              --task-timeout=4h \
+              --set-cloudsql-instances=$PROJECT_ID:$REGION:landbrugsdata-db
+          fi
+          
+          echo "Deployment of $job completed successfully"
+        done
