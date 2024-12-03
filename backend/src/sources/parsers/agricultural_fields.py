@@ -33,6 +33,8 @@ class AgriculturalFields(Source):
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
         self.start_time = None
         self.features_processed = 0
+        self.bucket = self.storage_client.bucket(config['bucket'])
+        logger.info(f"Initialized with bucket: {config['bucket']}")
 
     async def _get_total_count(self, session):
         """Get total number of features"""
