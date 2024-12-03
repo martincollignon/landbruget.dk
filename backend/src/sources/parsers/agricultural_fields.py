@@ -27,13 +27,14 @@ class AgriculturalFields(Source):
     def __init__(self, config):
         super().__init__(config)
         self.batch_size = 100
-        self.max_concurrent = 10
+        self.max_concurrent = 5
         self.storage_batch_size = 1000
+        self.max_retries = 3
         
         self.timeout_config = aiohttp.ClientTimeout(
-            total=60,
-            connect=30,
-            sock_read=30
+            total=1200,
+            connect=60,
+            sock_read=540
         )
         
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -70,8 +71,8 @@ class AgriculturalFields(Source):
             logger.error(f"Error getting total count: {str(e)}", exc_info=True)
             return 0
 
-    async def _fetch_chunk(self, session, start_index):
-        """Fetch a chunk of features"""
+    async def _fetch_chunk(self, session, start_index, retry_count=0):
+        """Fetch a chunk of features with retry logic"""
         params = {
             'service': 'WFS',
             'version': '2.0.0',
@@ -85,8 +86,7 @@ class AgriculturalFields(Source):
         async with self.request_semaphore:
             try:
                 chunk_start = time.time()
-                logger.info(f"Fetching from URL: {self.config['url']}")
-                logger.info(f"With params: {params}")
+                logger.debug(f"Fetching from URL: {self.config['url']} (attempt {retry_count + 1})")
                 async with session.get(self.config['url'], params=params) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -107,10 +107,23 @@ class AgriculturalFields(Source):
                         logger.error(f"Error response {response.status} at index {start_index}")
                         response_text = await response.text()
                         logger.error(f"Response: {response_text[:500]}...")
+                        
+                        if response.status >= 500 and retry_count < self.max_retries:
+                            await asyncio.sleep(2 ** retry_count)
+                            return await self._fetch_chunk(session, start_index, retry_count + 1)
                         return None
                         
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout at index {start_index}")
+                if retry_count < self.max_retries:
+                    await asyncio.sleep(2 ** retry_count)
+                    return await self._fetch_chunk(session, start_index, retry_count + 1)
+                return None
             except Exception as e:
                 logger.error(f"Error fetching chunk at index {start_index}: {str(e)}")
+                if retry_count < self.max_retries:
+                    await asyncio.sleep(2 ** retry_count)
+                    return await self._fetch_chunk(session, start_index, retry_count + 1)
                 return None
 
     async def sync(self):
@@ -121,7 +134,8 @@ class AgriculturalFields(Source):
         features_batch = []
         
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout_config) as session:
+            conn = aiohttp.TCPConnector(limit=self.max_concurrent)
+            async with aiohttp.ClientSession(timeout=self.timeout_config, connector=conn) as session:
                 total_features = await self._get_total_count(session)
                 if total_features == 0:
                     logger.error("No features found to sync")
@@ -129,22 +143,26 @@ class AgriculturalFields(Source):
                 
                 tasks = []
                 for start_index in range(0, total_features, self.batch_size):
-                    # Manage concurrent tasks
                     if len(tasks) >= self.max_concurrent:
-                        completed, tasks = await asyncio.wait(
+                        done, pending = await asyncio.wait(
                             tasks, 
                             return_when=asyncio.FIRST_COMPLETED
                         )
-                        for task in completed:
-                            chunk = await task
-                            if chunk is not None:
-                                features_batch.extend(chunk.to_dict('records'))
+                        tasks = list(pending)
+                        for task in done:
+                            try:
+                                chunk = await task
+                                if chunk is not None:
+                                    features_batch.extend(chunk.to_dict('records'))
+                            except Exception as e:
+                                logger.error(f"Error processing task: {str(e)}")
+                                continue
                     
-                    # Create new task
+                    await asyncio.sleep(0.1)
+                    
                     task = asyncio.create_task(self._fetch_chunk(session, start_index))
                     tasks.append(task)
                     
-                    # Write to storage when batch is large enough
                     if len(features_batch) >= self.storage_batch_size:
                         await self.write_to_storage(features_batch, 'agricultural_fields')
                         self.features_processed += len(features_batch)
@@ -159,15 +177,17 @@ class AgriculturalFields(Source):
                         )
                         features_batch = []
                 
-                # Process remaining tasks
                 if tasks:
-                    completed, _ = await asyncio.wait(tasks)
-                    for task in completed:
-                        chunk = await task
-                        if chunk is not None:
-                            features_batch.extend(chunk.to_dict('records'))
+                    done, _ = await asyncio.wait(tasks)
+                    for task in done:
+                        try:
+                            chunk = await task
+                            if chunk is not None:
+                                features_batch.extend(chunk.to_dict('records'))
+                        except Exception as e:
+                            logger.error(f"Error processing remaining task: {str(e)}")
+                            continue
                 
-                # Write remaining features
                 if features_batch:
                     await self.write_to_storage(features_batch, 'agricultural_fields')
                     self.features_processed += len(features_batch)
@@ -193,18 +213,14 @@ class AgriculturalFields(Source):
             return
         
         try:
-            # Create GeoDataFrame from features
             gdf = gpd.GeoDataFrame(features)
             
-            # Write to temporary local file
             temp_file = f"/tmp/{dataset}_current.parquet"
             gdf.to_parquet(temp_file)
             
-            # Upload to Cloud Storage
             blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
             blob.upload_from_filename(temp_file)
             
-            # Cleanup
             os.remove(temp_file)
             
             logger.info(f"Successfully wrote {len(gdf)} features to storage")
