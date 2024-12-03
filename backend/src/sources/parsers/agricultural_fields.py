@@ -5,6 +5,7 @@ import asyncio
 import xml.etree.ElementTree as ET
 from ..base import Source
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -160,3 +161,29 @@ class AgriculturalFields(Source):
 
     async def fetch(self):
         return await self.sync()
+
+    async def write_to_storage(self, features, dataset):
+        """Write features to GeoParquet in Cloud Storage"""
+        if not features:
+            return
+        
+        try:
+            # Create GeoDataFrame from features
+            gdf = gpd.GeoDataFrame(features)
+            
+            # Write to temporary local file
+            temp_file = f"/tmp/{dataset}_current.parquet"
+            gdf.to_parquet(temp_file)
+            
+            # Upload to Cloud Storage
+            blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
+            blob.upload_from_filename(temp_file)
+            
+            # Cleanup
+            os.remove(temp_file)
+            
+            logger.info(f"Successfully wrote {len(gdf)} features to storage")
+            
+        except Exception as e:
+            logger.error(f"Error writing to storage: {str(e)}")
+            raise
