@@ -40,6 +40,11 @@ jobs:
             memory: 4Gi
             secrets: DB_PASSWORD=db-password:latest
             sync_type: water_projects
+          - name: agricultural-fields-sync
+            cpu: 4
+            memory: 8Gi
+            secrets: DB_PASSWORD=db-password:latest
+            sync_type: agricultural_fields
       fail-fast: false
 
     steps:
