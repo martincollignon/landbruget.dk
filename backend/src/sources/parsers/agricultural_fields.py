@@ -45,6 +45,7 @@ class AgriculturalFields(Source):
         }
         
         try:
+            logger.info(f"Fetching total count from {self.config['url']}")
             async with session.get(self.config['url'], params=params) as response:
                 if response.status == 200:
                     text = await response.text()
@@ -54,9 +55,11 @@ class AgriculturalFields(Source):
                     return total
                 else:
                     logger.error(f"Error getting count: {response.status}")
+                    response_text = await response.text()
+                    logger.error(f"Response: {response_text[:500]}...")
                     return 0
         except Exception as e:
-            logger.error(f"Error getting total count: {str(e)}")
+            logger.error(f"Error getting total count: {str(e)}", exc_info=True)
             return 0
 
     async def _fetch_chunk(self, session, start_index):
@@ -74,14 +77,18 @@ class AgriculturalFields(Source):
         async with self.request_semaphore:
             try:
                 chunk_start = time.time()
+                logger.info(f"Fetching from URL: {self.config['url']}")
+                logger.info(f"With params: {params}")
                 async with session.get(self.config['url'], params=params) as response:
                     if response.status == 200:
                         data = await response.json()
                         features = data.get('features', [])
                         
                         if not features:
+                            logger.warning(f"No features returned at index {start_index}")
                             return None
                             
+                        logger.debug(f"Creating GeoDataFrame from {len(features)} features")
                         gdf = gpd.GeoDataFrame.from_features(features)
                         gdf = gdf.rename(columns=self.COLUMN_MAPPING)
                         
@@ -90,6 +97,8 @@ class AgriculturalFields(Source):
                         return gdf
                     else:
                         logger.error(f"Error response {response.status} at index {start_index}")
+                        response_text = await response.text()
+                        logger.error(f"Response: {response_text[:500]}...")
                         return None
                         
             except Exception as e:
