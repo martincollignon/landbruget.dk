@@ -26,9 +26,15 @@ class AgriculturalFields(Source):
     
     def __init__(self, config):
         super().__init__(config)
-        self.batch_size = 500
+        self.batch_size = 100
         self.max_concurrent = 10
-        self.storage_batch_size = 2000
+        self.storage_batch_size = 1000
+        
+        self.timeout_config = aiohttp.ClientTimeout(
+            total=60,
+            connect=30,
+            sock_read=30
+        )
         
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
         self.start_time = None
@@ -115,36 +121,51 @@ class AgriculturalFields(Source):
         features_batch = []
         
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=self.timeout_config) as session:
                 total_features = await self._get_total_count(session)
                 if total_features == 0:
                     logger.error("No features found to sync")
                     return 0
                 
+                tasks = []
                 for start_index in range(0, total_features, self.batch_size):
-                    try:
-                        chunk = await self._fetch_chunk(session, start_index)
+                    # Manage concurrent tasks
+                    if len(tasks) >= self.max_concurrent:
+                        completed, tasks = await asyncio.wait(
+                            tasks, 
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for task in completed:
+                            chunk = await task
+                            if chunk is not None:
+                                features_batch.extend(chunk.to_dict('records'))
+                    
+                    # Create new task
+                    task = asyncio.create_task(self._fetch_chunk(session, start_index))
+                    tasks.append(task)
+                    
+                    # Write to storage when batch is large enough
+                    if len(features_batch) >= self.storage_batch_size:
+                        await self.write_to_storage(features_batch, 'agricultural_fields')
+                        self.features_processed += len(features_batch)
+                        elapsed = time.time() - self.start_time
+                        speed = self.features_processed / elapsed
+                        remaining = total_features - self.features_processed
+                        eta_minutes = (remaining / speed) / 60 if speed > 0 else 0
+                        
+                        logger.info(
+                            f"Progress: {self.features_processed:,}/{total_features:,} "
+                            f"({speed:.1f} features/second, ETA: {eta_minutes:.1f} minutes)"
+                        )
+                        features_batch = []
+                
+                # Process remaining tasks
+                if tasks:
+                    completed, _ = await asyncio.wait(tasks)
+                    for task in completed:
+                        chunk = await task
                         if chunk is not None:
                             features_batch.extend(chunk.to_dict('records'))
-                        
-                        # Write to storage when batch is large enough
-                        if len(features_batch) >= self.storage_batch_size:
-                            await self.write_to_storage(features_batch, 'agricultural_fields')
-                            self.features_processed += len(features_batch)
-                            elapsed = time.time() - self.start_time
-                            speed = self.features_processed / elapsed
-                            remaining = total_features - self.features_processed
-                            eta_minutes = (remaining / speed) / 60 if speed > 0 else 0
-                            
-                            logger.info(
-                                f"Progress: {self.features_processed:,}/{total_features:,} "
-                                f"({speed:.1f} features/second, ETA: {eta_minutes:.1f} minutes)"
-                            )
-                            features_batch = []
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing chunk at index {start_index}: {str(e)}")
-                        continue
                 
                 # Write remaining features
                 if features_batch:
