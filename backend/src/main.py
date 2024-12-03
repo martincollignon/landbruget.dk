@@ -5,9 +5,7 @@ import logging
 from datetime import datetime, timedelta
 
 from .config import SOURCES
-from .sources.parsers.agricultural_fields import AgriculturalFields
-from .sources.parsers.wetlands import Wetlands
-from .sources.parsers.water_projects import WaterProjects
+from .sources.parsers import get_source_handler
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -56,15 +54,9 @@ async def get_data(source_id: str):
         raise HTTPException(status_code=403, detail="Source is disabled")
     
     try:
-        # Initialize appropriate source
-        source = None
-        if source_id == "agricultural_fields":
-            source = AgriculturalFields(config)
-        elif source_id == "wetlands":
-            source = Wetlands(config)
-        elif source_id == "water_projects":
-            source = WaterProjects(config)
-        else:
+        # Get appropriate source handler
+        source = get_source_handler(source_id, config)
+        if not source:
             raise HTTPException(status_code=501, detail="Source not implemented")
         
         # Fetch data
