@@ -38,19 +38,13 @@ RUN pip install --no-cache-dir \
     pyproj>=3.0.0 \
     fiona>=1.9.0
 
-# 3. Install Airflow with constraints (changes occasionally)
-ENV AIRFLOW_VERSION=2.10.3
-ENV PYTHON_VERSION=3.12
-RUN pip install --no-cache-dir "apache-airflow[gcp]==${AIRFLOW_VERSION}" \
-    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
-
-# 4. Install sync-specific dependencies (changes occasionally)
+# 3. Install sync-specific dependencies (changes occasionally)
 RUN pip install --no-cache-dir \
     tqdm>=4.62.0 \
     psutil==5.9.7 \
     pyarrow>=12.0.0
 
-# 5. Copy requirements and install remaining deps (changes most frequently)
+# 4. Copy requirements and install remaining deps (changes most frequently)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -69,5 +63,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY scripts ./scripts
 COPY src ./src
+COPY sync_app.py .
 
-ENTRYPOINT ["python", "-m", "scripts.sync_app"]
+ENTRYPOINT ["python", "sync_app.py"]
