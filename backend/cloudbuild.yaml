@@ -26,7 +26,7 @@ images:
   - 'gcr.io/${PROJECT_ID}/${_SERVICE_NAME}:latest'
 
 substitutions:
-  _SERVICE_NAME: sync
+  _SERVICE_NAME: data-sync
   _DOCKERFILE: Dockerfile.sync
 
 options:

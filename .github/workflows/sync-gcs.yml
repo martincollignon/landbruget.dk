@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'dags/**'
       - 'backend/dataflow/**'
       - 'backend/requirements.txt'
       - 'backend/Dockerfile.processing'
@@ -30,9 +29,6 @@ jobs:
 
     - name: 'Upload Files'
       run: |
-        # Sync DAGs to Composer (with deletion of obsolete files)
-        gsutil -m rsync -d -r dags/ gs://landbrugsdata-processing/dags/
-        
         # Sync processing files
         cd backend
         gsutil -m rsync -d -r dataflow/ gs://landbrugsdata-processing/dataflow/
