@@ -3,7 +3,7 @@ import aiohttp
 import geopandas as gpd
 import asyncio
 import xml.etree.ElementTree as ET
-from ..base import Source
+from ...base import Source
 import time
 import os
 
