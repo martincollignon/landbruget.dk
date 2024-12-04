@@ -38,5 +38,13 @@ SOURCES = {
         "create_combined": True,
         "combined_timeout": 3600,
         "bucket": "landbrugsdata-raw-data"
+    },
+    "crops": {
+        "name": "Danish Agricultural Crop Codes",
+        "type": "static",
+        "description": "Reference data for crop codes and compensation categories",
+        "frequency": "static",
+        "enabled": True,
+        "bucket": "landbrugsdata-raw-data"
     }
 }
