@@ -1,10 +1,9 @@
 SOURCES = {
     "agricultural_fields": {
         "name": "Danish Agricultural Fields",
-        "type": "wfs",
+        "type": "arcgis",
         "description": "Weekly updated agricultural field data",
-        "url": "https://geodata.fvm.dk/geoserver/wfs",
-        "layer": "Marker:Marker_seneste",
+        "url": "https://kort.vd.dk/server/rest/services/Grunddata/Marker_og_Markblokke/MapServer/12/query",
         "frequency": "weekly",
         "enabled": True,
         "bucket": "landbrugsdata-raw-data"

@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from ...base import Source
 import time
 import os
+import ssl
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ class AgriculturalFields(Source):
     
     def __init__(self, config):
         super().__init__(config)
-        self.batch_size = 100
+        self.batch_size = 2000
         self.max_concurrent = 5
-        self.storage_batch_size = 1000
+        self.storage_batch_size = 10000
         self.max_retries = 3
         
         self.timeout_config = aiohttp.ClientTimeout(
@@ -37,29 +38,34 @@ class AgriculturalFields(Source):
             sock_read=540
         )
         
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
+        self.ssl_context.options |= 0x4
+        
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
         self.start_time = None
         self.features_processed = 0
         self.bucket = self.storage_client.bucket(config['bucket'])
-        logger.info(f"Initialized with bucket: {config['bucket']}")
+        logger.info(f"Initialized with batch_size={self.batch_size}, "
+                   f"max_concurrent={self.max_concurrent}, "
+                   f"storage_batch_size={self.storage_batch_size}")
 
     async def _get_total_count(self, session):
         """Get total number of features"""
         params = {
-            'service': 'WFS',
-            'version': '2.0.0',
-            'request': 'GetFeature',
-            'typeName': self.config['layer'],
-            'resultType': 'hits'
+            'f': 'json',
+            'where': '1=1',
+            'returnCountOnly': 'true'
         }
         
         try:
-            logger.info(f"Fetching total count from {self.config['url']}")
-            async with session.get(self.config['url'], params=params) as response:
+            url = self.config['url']
+            logger.info(f"Fetching total count from {url}")
+            async with session.get(url, params=params, ssl=self.ssl_context) as response:
                 if response.status == 200:
-                    text = await response.text()
-                    root = ET.fromstring(text)
-                    total = int(root.get('numberMatched', '0'))
+                    data = await response.json()
+                    total = data.get('count', 0)
                     logger.info(f"Total features available: {total:,}")
                     return total
                 else:
@@ -74,20 +80,20 @@ class AgriculturalFields(Source):
     async def _fetch_chunk(self, session, start_index, retry_count=0):
         """Fetch a chunk of features with retry logic"""
         params = {
-            'service': 'WFS',
-            'version': '2.0.0',
-            'request': 'GetFeature',
-            'typeName': self.config['layer'],
-            'outputFormat': 'application/json',
-            'startIndex': str(start_index),
-            'count': str(self.batch_size)
+            'f': 'json',
+            'where': '1=1',
+            'returnGeometry': 'true',
+            'outFields': '*',
+            'resultOffset': str(start_index),
+            'resultRecordCount': str(self.batch_size)
         }
         
         async with self.request_semaphore:
             try:
                 chunk_start = time.time()
-                logger.debug(f"Fetching from URL: {self.config['url']} (attempt {retry_count + 1})")
-                async with session.get(self.config['url'], params=params) as response:
+                url = self.config['url']
+                logger.debug(f"Fetching from URL: {url} (attempt {retry_count + 1})")
+                async with session.get(url, params=params, ssl=self.ssl_context) as response:
                     if response.status == 200:
                         data = await response.json()
                         features = data.get('features', [])
@@ -97,8 +103,25 @@ class AgriculturalFields(Source):
                             return None
                             
                         logger.debug(f"Creating GeoDataFrame from {len(features)} features")
-                        gdf = gpd.GeoDataFrame.from_features(features)
+                        
+                        # Convert ArcGIS REST API features to GeoJSON format
+                        geojson_features = []
+                        for feature in features:
+                            geojson_feature = {
+                                'type': 'Feature',
+                                'properties': feature['attributes'],
+                                'geometry': {
+                                    'type': 'Polygon',
+                                    'coordinates': feature['geometry']['rings']
+                                }
+                            }
+                            geojson_features.append(geojson_feature)
+                        
+                        gdf = gpd.GeoDataFrame.from_features(geojson_features)
                         gdf = gdf.rename(columns=self.COLUMN_MAPPING)
+                        
+                        # Set the CRS to EPSG:25832 (the coordinate system used by the API)
+                        gdf.set_crs(epsg=25832, inplace=True)
                         
                         chunk_time = time.time() - chunk_start
                         logger.debug(f"Processed {len(features)} features in {chunk_time:.2f}s")
@@ -113,8 +136,8 @@ class AgriculturalFields(Source):
                             return await self._fetch_chunk(session, start_index, retry_count + 1)
                         return None
                         
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout at index {start_index}")
+            except ssl.SSLError as e:
+                logger.error(f"SSL Error at index {start_index}: {str(e)}")
                 if retry_count < self.max_retries:
                     await asyncio.sleep(2 ** retry_count)
                     return await self._fetch_chunk(session, start_index, retry_count + 1)
@@ -134,7 +157,7 @@ class AgriculturalFields(Source):
         features_batch = []
         
         try:
-            conn = aiohttp.TCPConnector(limit=self.max_concurrent)
+            conn = aiohttp.TCPConnector(limit=self.max_concurrent, ssl=self.ssl_context)
             async with aiohttp.ClientSession(timeout=self.timeout_config, connector=conn) as session:
                 total_features = await self._get_total_count(session)
                 if total_features == 0:
