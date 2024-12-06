@@ -33,6 +33,7 @@ SOURCES = {
         "description": "Water projects from various Danish programs",
         "url": "https://geodata.fvm.dk/geoserver/wfs",
         "url_mim": "https://wfs2-miljoegis.mim.dk/vandprojekter/wfs",
+        "url_nst": "https://gis.nst.dk/server/rest/services/autonom/Klima_lavbund_demarkation___offentlige_projekter/FeatureServer",
         "frequency": "weekly",
         "enabled": True,
         "create_combined": True,

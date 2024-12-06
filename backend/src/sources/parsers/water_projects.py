@@ -59,14 +59,20 @@ class WaterProjects(Source):
             "Vandprojekter:Private_vaadomraader",
             "Vandprojekter:Restaurering_af_aadale_2024",
             "vandprojekter:kla_projektforslag",
-            "vandprojekter:kla_projektomraader"
+            "vandprojekter:kla_projektomraader",
+            "Klima_lavbund_demarkation___offentlige_projekter:0"
         ]
         
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
         
         self.url_mapping = {
             'vandprojekter:kla_projektforslag': 'https://wfs2-miljoegis.mim.dk/vandprojekter/wfs',
-            'vandprojekter:kla_projektomraader': 'https://wfs2-miljoegis.mim.dk/vandprojekter/wfs'
+            'vandprojekter:kla_projektomraader': 'https://wfs2-miljoegis.mim.dk/vandprojekter/wfs',
+            'Klima_lavbund_demarkation___offentlige_projekter:0': 'https://gis.nst.dk/server/rest/services/autonom/Klima_lavbund_demarkation___offentlige_projekter/FeatureServer'
+        }
+        
+        self.service_types = {
+            'Klima_lavbund_demarkation___offentlige_projekter:0': 'arcgis'
         }
 
     def _get_params(self, layer, start_index=0):
@@ -271,6 +277,72 @@ class WaterProjects(Source):
             logger.error(f"Error writing to storage: {str(e)}", exc_info=True)
             raise
 
+    async def _fetch_arcgis_features(self, session, layer, url):
+        """Fetch features from ArcGIS REST service"""
+        try:
+            params = {
+                'f': 'json',
+                'where': '1=1',
+                'outFields': '*',
+                'geometryPrecision': '6',
+                'outSR': '25832',
+                'returnGeometry': 'true'
+            }
+
+            async with session.get(f"{url}/{layer.split(':')[1]}/query", params=params) as response:
+                if response.status != 200:
+                    logger.error(f"Error fetching ArcGIS features. Status: {response.status}")
+                    return None
+
+                data = await response.json()
+                features = []
+                
+                for feature in data.get('features', []):
+                    try:
+                        attrs = feature.get('attributes', {})
+                        geom = feature.get('geometry', {})
+                        
+                        if 'rings' not in geom:
+                            continue
+                            
+                        # Convert geometry
+                        polygons = []
+                        for ring in geom['rings']:
+                            coords = [(x, y) for x, y in ring]
+                            polygons.append(Polygon(coords))
+                        
+                        multi_poly = MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
+                        area_ha = multi_poly.area / 10000
+                        
+                        # Convert timestamps
+                        start_date = datetime.fromtimestamp(attrs.get('projektstart')/1000) if attrs.get('projektstart') else None
+                        end_date = datetime.fromtimestamp(attrs.get('projektslut')/1000) if attrs.get('projektslut') else None
+                        
+                        processed_feature = {
+                            'layer_name': layer,
+                            'geometry': multi_poly.wkt,
+                            'area_ha': area_ha,
+                            'projektnavn': attrs.get('projektnavn'),
+                            'enhedskontakt': attrs.get('enhedskontakt'),
+                            'startdato': start_date,
+                            'slutdato': end_date,
+                            'status': attrs.get('status'),
+                            'object_id': attrs.get('OBJECTID'),
+                            'global_id': attrs.get('GlobalID')
+                        }
+                        
+                        features.append(processed_feature)
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing feature: {str(e)}")
+                        continue
+                        
+                return features
+                
+        except Exception as e:
+            logger.error(f"Error in _fetch_arcgis_features: {str(e)}")
+            return None
+
     async def sync(self):
         """Sync all water project layers"""
         total_processed = 0
@@ -281,8 +353,23 @@ class WaterProjects(Source):
                 for layer in self.layers:
                     logger.info(f"\nProcessing layer: {layer}")
                     try:
+                        service_type = self.service_types.get(layer, 'wfs')
                         base_url = self.url_mapping.get(layer, self.config['url'])
-                        
+
+                        if service_type == 'arcgis':
+                            features = await self._fetch_arcgis_features(session, layer, base_url)
+                            if features:
+                                features_batch.extend(features)
+                                total_processed += len(features)
+                                
+                                if len(features_batch) >= self.storage_batch_size:
+                                    await self.write_to_storage(features_batch, 'water_projects')
+                                    features_batch = []
+                                
+                                logger.info(f"Layer {layer}: processed {len(features):,} features")
+                            continue
+
+                        # Existing WFS handling code
                         params = self._get_params(layer, 0)
                         async with session.get(base_url, params=params) as response:
                             if response.status != 200:
