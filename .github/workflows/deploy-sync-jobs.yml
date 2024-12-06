@@ -33,10 +33,15 @@ jobs:
     - name: Build and Push Containers
       run: |
         cd backend
-        # Build data-sync container
-        gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=data-sync,_DOCKERFILE=Dockerfile.sync . --quiet
-        # Build dataflow container
-        gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=dataflow-processing,_DOCKERFILE=Dockerfile.processing . --quiet
+        # Run builds in parallel and capture outputs
+        (gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=data-sync,_DOCKERFILE=Dockerfile.sync . --quiet) &
+        PID1=$!
+        (gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=dataflow-processing,_DOCKERFILE=Dockerfile.processing . --quiet) &
+        PID2=$!
+        
+        # Wait for both builds and check exit status
+        wait $PID1 || { echo "data-sync build failed"; exit 1; }
+        wait $PID2 || { echo "dataflow-processing build failed"; exit 1; }
 
     - name: Deploy Cloud Run Jobs
       run: |
