@@ -18,6 +18,7 @@ import psutil
 import pandas as pd
 
 from ...base import Source
+from ..utils.geometry_validator import validate_and_transform_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -257,8 +258,11 @@ class Cadastral(Source):
             # Convert WKT to shapely geometries
             geometries = [wkt.loads(f['geometry']) for f in features]
             
-            # Create GeoDataFrame directly
+            # Create GeoDataFrame with original CRS
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
+            
+            # Validate and transform geometries
+            gdf = validate_and_transform_geometries(gdf, 'cadastral')
             
             # Write to temporary local file
             temp_file = f"/tmp/{dataset}_current.parquet"
