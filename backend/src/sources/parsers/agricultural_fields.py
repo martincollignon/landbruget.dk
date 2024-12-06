@@ -7,6 +7,7 @@ from ...base import Source
 import time
 import os
 import ssl
+from ..utils.geometry_validator import validate_and_transform_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -236,14 +237,20 @@ class AgriculturalFields(Source):
             return
         
         try:
-            gdf = gpd.GeoDataFrame(features)
+            gdf = gpd.GeoDataFrame(features, crs="EPSG:25832")
             
+            # Validate and transform geometries
+            gdf = validate_and_transform_geometries(gdf, 'agricultural_fields')
+            
+            # Write to temporary local file
             temp_file = f"/tmp/{dataset}_current.parquet"
             gdf.to_parquet(temp_file)
             
+            # Upload to Cloud Storage
             blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
             blob.upload_from_filename(temp_file)
             
+            # Cleanup
             os.remove(temp_file)
             
             logger.info(f"Successfully wrote {len(gdf)} features to storage")

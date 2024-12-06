@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from ...base import Source
+from ..utils.geometry_validator import validate_and_transform_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -229,39 +230,23 @@ class WaterProjects(Source):
             return 0
             
         try:
-            logger.info(f"Converting {len(features)} features to GeoDataFrame...")
-            
             # Create DataFrame from features
             df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
             
-            # Data validation
-            logger.info("Validating data types...")
-            for col in ['startdato', 'slutdato']:
-                if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors='coerce')
-            
-            for col in ['area_ha', 'budget']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            
             # Convert WKT to shapely geometries
-            logger.info("Converting geometries...")
             geometries = [wkt.loads(f['geometry']) for f in features if f.get('geometry')]
             
-            # Create GeoDataFrame
-            logger.info("Creating GeoDataFrame...")
+            # Create GeoDataFrame with original CRS
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
             
-            # Log column info
-            logger.debug(f"Columns and their types:\n{gdf.dtypes}")
+            # Validate and transform geometries
+            gdf = validate_and_transform_geometries(gdf, 'water_projects')
             
             # Write to temporary local file
             temp_file = f"/tmp/{dataset}_current.parquet"
-            logger.info(f"Writing to temporary file: {temp_file}")
             gdf.to_parquet(temp_file)
             
             # Upload to Cloud Storage
-            logger.info("Uploading to Cloud Storage...")
             storage_client = storage.Client()
             bucket = storage_client.bucket('landbrugsdata-raw-data')
             blob = bucket.blob(f'raw/{dataset}/current.parquet')
@@ -270,11 +255,10 @@ class WaterProjects(Source):
             # Cleanup
             os.remove(temp_file)
             
-            logger.info(f"Successfully wrote {len(gdf)} features to storage")
             return len(gdf)
             
         except Exception as e:
-            logger.error(f"Error writing to storage: {str(e)}", exc_info=True)
+            logger.error(f"Error writing to storage: {str(e)}")
             raise
 
     async def _fetch_arcgis_features(self, session, layer, url):

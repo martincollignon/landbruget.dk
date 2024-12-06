@@ -7,6 +7,12 @@ from shapely.geometry import Polygon
 import backoff
 from aiohttp import ClientError, ClientTimeout
 from ...base import Source
+from ..utils.geometry_validator import validate_and_transform_geometries
+import shapely as wkt
+import pandas as pd
+import geopandas as gpd
+from google.cloud import storage
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -136,3 +142,40 @@ class Wetlands(Source):
     async def fetch(self):
         """Not implemented - using sync() directly"""
         raise NotImplementedError("This source uses sync() directly") 
+
+    async def write_to_storage(self, features, dataset):
+        """Write features to GeoParquet in Cloud Storage"""
+        if not features:
+            return
+        
+        try:
+            # Create DataFrame from features
+            df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
+            
+            # Convert WKT to shapely geometries
+            geometries = [wkt.loads(f['geometry']) for f in features]
+            
+            # Create GeoDataFrame with original CRS
+            gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
+            
+            # Validate and transform geometries
+            gdf = validate_and_transform_geometries(gdf, 'wetlands')
+            
+            # Write to temporary local file
+            temp_file = f"/tmp/{dataset}_current.parquet"
+            gdf.to_parquet(temp_file)
+            
+            # Upload to Cloud Storage
+            storage_client = storage.Client()
+            bucket = storage_client.bucket('landbrugsdata-raw-data')
+            blob = bucket.blob(f'raw/{dataset}/current.parquet')
+            blob.upload_from_filename(temp_file)
+            
+            # Cleanup
+            os.remove(temp_file)
+            
+            logger.info(f"Successfully wrote {len(gdf)} features to storage")
+            
+        except Exception as e:
+            logger.error(f"Error writing to storage: {str(e)}")
+            raise
