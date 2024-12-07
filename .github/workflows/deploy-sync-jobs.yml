@@ -51,7 +51,6 @@ jobs:
           ["wetlands-sync"]="2|4Gi|DB_PASSWORD=db-password:latest|wetlands"
           ["water-projects-sync"]="2|4Gi|DB_PASSWORD=db-password:latest|water_projects"
           ["agricultural-fields-sync"]="4|8Gi|DB_PASSWORD=db-password:latest|agricultural_fields"
-          ["crop-codes-sync"]="1|2Gi|DB_PASSWORD=db-password:latest|crops"
         )
 
         for job in "${!jobs[@]}"; do

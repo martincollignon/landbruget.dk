@@ -1,8 +1,7 @@
-from .agricultural_fields import AgriculturalFields
 from .wetlands import Wetlands
-from .water_projects import WaterProjects
 from .cadastral import Cadastral
-from ..static.crops.parser import CropCodes
+from .water_projects import WaterProjects
+from .agricultural_fields import AgriculturalFields
 
 def get_source_handler(source_id: str, config: dict):
     """Get appropriate source handler based on source ID"""
@@ -10,8 +9,7 @@ def get_source_handler(source_id: str, config: dict):
         'water_projects': WaterProjects,
         'wetlands': Wetlands,
         'cadastral': Cadastral,
-        'agricultural_fields': AgriculturalFields,
-        'crops': CropCodes
+        'agricultural_fields': AgriculturalFields
     }
     
     handler_class = handlers.get(source_id)

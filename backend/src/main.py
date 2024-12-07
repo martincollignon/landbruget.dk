@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 
 from .config import SOURCES
 from .sources.parsers import get_source_handler
-from sources.static.crops.parser import CropCodes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
