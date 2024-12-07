@@ -8,7 +8,7 @@ from typing import Optional
 import time
 import os
 import pandas as pd
-from sources.utils.geometry_validator import validate_and_transform_geometries
+from .sources.utils.geometry_validator import validate_and_transform_geometries
 
 logger = logging.getLogger(__name__)
 
