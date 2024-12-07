@@ -149,11 +149,11 @@ class Wetlands(Source):
             return
         
         try:
-            # Create DataFrame from features
-            df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
+            # Create DataFrame from features properties
+            df = pd.DataFrame([f['properties'] for f in features])
             
-            # Convert WKT to shapely geometries
-            geometries = [wkt.loads(f['geometry']) for f in features]
+            # Get geometries directly (they're already Shapely objects)
+            geometries = [Polygon(f['geometry']['coordinates'][0]) for f in features]
             
             # Create GeoDataFrame with original CRS
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
