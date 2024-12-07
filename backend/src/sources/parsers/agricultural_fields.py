@@ -155,7 +155,7 @@ class AgriculturalFields(Source):
         logger.info("Starting agricultural fields sync...")
         self.start_time = time.time()
         self.features_processed = 0
-        features_batch = []
+        all_features = []
         
         try:
             conn = aiohttp.TCPConnector(limit=self.max_concurrent, ssl=self.ssl_context)
@@ -177,7 +177,8 @@ class AgriculturalFields(Source):
                             try:
                                 chunk = await task
                                 if chunk is not None:
-                                    features_batch.extend(chunk.to_dict('records'))
+                                    all_features.extend(chunk.to_dict('records'))
+                                    self.features_processed += len(chunk)
                             except Exception as e:
                                 logger.error(f"Error processing task: {str(e)}")
                                 continue
@@ -187,9 +188,9 @@ class AgriculturalFields(Source):
                     task = asyncio.create_task(self._fetch_chunk(session, start_index))
                     tasks.append(task)
                     
-                    if len(features_batch) >= self.storage_batch_size:
-                        await self.write_to_storage(features_batch, 'agricultural_fields')
-                        self.features_processed += len(features_batch)
+                    if len(all_features) >= self.storage_batch_size:
+                        await self.write_to_storage(all_features, 'agricultural_fields')
+                        self.features_processed += len(all_features)
                         elapsed = time.time() - self.start_time
                         speed = self.features_processed / elapsed
                         remaining = total_features - self.features_processed
@@ -199,7 +200,7 @@ class AgriculturalFields(Source):
                             f"Progress: {self.features_processed:,}/{total_features:,} "
                             f"({speed:.1f} features/second, ETA: {eta_minutes:.1f} minutes)"
                         )
-                        features_batch = []
+                        all_features = []
                 
                 if tasks:
                     done, _ = await asyncio.wait(tasks)
@@ -207,14 +208,14 @@ class AgriculturalFields(Source):
                         try:
                             chunk = await task
                             if chunk is not None:
-                                features_batch.extend(chunk.to_dict('records'))
+                                all_features.extend(chunk.to_dict('records'))
                         except Exception as e:
                             logger.error(f"Error processing remaining task: {str(e)}")
                             continue
                 
-                if features_batch:
-                    await self.write_to_storage(features_batch, 'agricultural_fields')
-                    self.features_processed += len(features_batch)
+                if all_features:
+                    await self.write_to_storage(all_features, 'agricultural_fields')
+                    self.features_processed += len(all_features)
                 
                 total_time = time.time() - self.start_time
                 final_speed = self.features_processed / total_time

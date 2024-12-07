@@ -13,6 +13,7 @@ import pandas as pd
 import geopandas as gpd
 from google.cloud import storage
 import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -102,42 +103,29 @@ class Wetlands(Source):
     async def sync(self):
         """Sync wetlands data to Cloud Storage"""
         logger.info("Starting wetlands sync...")
+        start_time = datetime.now()
         
-        async with aiohttp.ClientSession() as session:
-            # Get total count
-            params = self._get_params(0)
-            async with session.get(self.config['url'], params=params) as response:
-                text = await response.text()
-                root = ET.fromstring(text)
-                total_features = int(root.get('numberMatched', '0'))
-                logger.info(f"Total available features: {total_features:,}")
-                
-                # Process first batch
-                features = [
-                    self._parse_feature(f) 
-                    for f in root.findall('.//natur:kulstof2022', self.namespaces)
-                ]
-                features = [f for f in features if f]
-                
-                if features:
-                    await self.write_to_storage(features, 'wetlands')
-                logger.info(f"Wrote first batch: {len(features)} features")
-                
-                # Process remaining batches
-                total_processed = len(features)
-                for start_index in range(self.batch_size, total_features, self.batch_size):
-                    try:
-                        chunk = await self._fetch_chunk(session, start_index)
-                        if chunk:
-                            await self.write_to_storage(chunk, 'wetlands')
-                            total_processed += len(chunk)
-                            logger.info(f"Progress: {total_processed:,}/{total_features:,}")
-                    except Exception as e:
-                        logger.error(f"Error processing batch at {start_index}: {str(e)}")
-                        continue
-        
-        logger.info(f"Sync completed. Total processed: {total_processed:,}")
-        return total_processed
+        async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
+            total_features = await self._get_total_count(session)
+            all_features = []  # Accumulate all features
+            total_processed = 0
+            
+            for start_index in range(0, total_features, self.page_size):
+                try:
+                    chunk = await self._fetch_chunk(session, start_index)
+                    if chunk:
+                        all_features.extend(chunk)  # Accumulate features
+                        total_processed += len(chunk)
+                        logger.info(f"Progress: {total_processed:,}/{total_features:,}")
+                except Exception as e:
+                    logger.error(f"Error processing batch at {start_index}: {str(e)}")
+                    continue
+            
+            # Write all features at once
+            if all_features:
+                await self.write_to_storage(all_features, 'wetlands')
+                logger.info(f"Sync completed. Total processed: {total_processed:,}")
+                return total_processed
 
     async def fetch(self):
         """Not implemented - using sync() directly"""

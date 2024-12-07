@@ -330,7 +330,7 @@ class WaterProjects(Source):
     async def sync(self):
         """Sync all water project layers"""
         total_processed = 0
-        features_batch = []
+        all_features = []  # Accumulate all features
         
         try:
             async with aiohttp.ClientSession(headers=self.headers) as session:
@@ -343,14 +343,9 @@ class WaterProjects(Source):
                         if service_type == 'arcgis':
                             features = await self._fetch_arcgis_features(session, layer, base_url)
                             if features:
-                                features_batch.extend(features)
+                                all_features.extend(features)  # Accumulate features
                                 total_processed += len(features)
-                                
-                                if len(features_batch) >= self.storage_batch_size:
-                                    await self.write_to_storage(features_batch, 'water_projects')
-                                    features_batch = []
-                                
-                                logger.info(f"Layer {layer}: processed {len(features):,} features")
+                                logger.info(f"Layer {layer}: processed {len(features):,} features. Total: {total_processed:,}")
                             continue
 
                         # Existing WFS handling code
@@ -383,14 +378,8 @@ class WaterProjects(Source):
                                         features.append(parsed)
                             
                             if features:
-                                features_batch.extend(features)
+                                all_features.extend(features)  # Accumulate features
                                 total_processed += len(features)
-                                
-                                # Write batch if it's large enough
-                                if len(features_batch) >= self.storage_batch_size:
-                                    await self.write_to_storage(features_batch, 'water_projects')
-                                    features_batch = []
-                                
                                 logger.info(f"Layer {layer}: processed {len(features):,} features. Total: {total_processed:,}")
                             
                             # Process remaining batches
@@ -398,23 +387,17 @@ class WaterProjects(Source):
                                 logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
                                 chunk = await self._fetch_chunk(session, layer, start_index)
                                 if chunk:
-                                    features_batch.extend(chunk)
+                                    all_features.extend(chunk)  # Accumulate features
                                     total_processed += len(chunk)
-                                    
-                                    # Write batch if it's large enough
-                                    if len(features_batch) >= self.storage_batch_size:
-                                        await self.write_to_storage(features_batch, 'water_projects')
-                                        features_batch = []
-                                    
                                     logger.info(f"Layer {layer}: processed {len(chunk):,} features. Total: {total_processed:,}")
                     
                     except Exception as e:
                         logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                         continue
 
-            # Write any remaining features
-            if features_batch:
-                await self.write_to_storage(features_batch, 'water_projects')
+            # Write all features at once at the end
+            if all_features:
+                await self.write_to_storage(all_features, 'water_projects')
             
             logger.info(f"Sync completed. Total processed: {total_processed:,}")
             return total_processed

@@ -289,37 +289,26 @@ class Cadastral(Source):
         start_time = datetime.now()
         
         async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
-            # Get total count first
             total_features = await self._get_total_count(session)
-            
-            features = []
+            all_features = []  # Accumulate all features
             total_processed = 0
             
-            # Process in batches
             for start_index in range(0, total_features, self.page_size):
                 try:
                     chunk = await self._fetch_chunk(session, start_index)
                     if chunk:
-                        features.extend(chunk)
-                        
-                        # Write batch to storage when we hit batch size
-                        if len(features) >= self.batch_size:
-                            await self.write_to_storage(features, 'cadastral')
-                            total_processed += len(features)
-                            features = []
-                            logger.info(f"Progress: {total_processed:,}/{total_features:,}")
-                            
+                        all_features.extend(chunk)  # Accumulate features
+                        total_processed += len(chunk)
+                        logger.info(f"Progress: {total_processed:,}/{total_features:,}")
                 except Exception as e:
                     logger.error(f"Error processing batch at {start_index}: {str(e)}")
                     continue
             
-            # Write any remaining features
-            if features:
-                await self.write_to_storage(features, 'cadastral')
-                total_processed += len(features)
-            
-            logger.info(f"Sync completed. Total processed: {total_processed:,}")
-            return total_processed
+            # Write all features at once
+            if all_features:
+                await self.write_to_storage(all_features, 'cadastral')
+                logger.info(f"Sync completed. Total processed: {total_processed:,}")
+                return total_processed
 
     async def fetch(self):
         """Implement abstract method - using sync() instead"""
