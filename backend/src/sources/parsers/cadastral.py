@@ -252,32 +252,40 @@ class Cadastral(Source):
             return
             
         try:
-            # Create DataFrame from features
+            # Create DataFrame from WKT features
             df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
-            
-            # Convert WKT to shapely geometries
             geometries = [wkt.loads(f['geometry']) for f in features]
-            
-            # Create GeoDataFrame with original CRS
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
             
             # Validate and transform geometries
-            gdf = validate_and_transform_geometries(gdf, 'cadastral')
+            gdf = validate_and_transform_geometries(gdf, dataset)
             
-            # Write to temporary local file
-            temp_file = f"/tmp/{dataset}_current.parquet"
-            gdf.to_parquet(temp_file)
+            # Handle working/final files
+            temp_working = f"/tmp/{dataset}_working.parquet"
+            working_blob = self.bucket.blob(f'raw/{dataset}/working.parquet')
             
-            # Upload to Cloud Storage
-            storage_client = storage.Client()
-            bucket = storage_client.bucket('landbrugsdata-raw-data')
-            blob = bucket.blob(f'raw/{dataset}/current.parquet')
-            blob.upload_from_filename(temp_file)
+            if working_blob.exists():
+                working_blob.download_to_filename(temp_working)
+                existing_gdf = gpd.read_parquet(temp_working)
+                logger.info(f"Appending {len(gdf):,} features to existing {len(existing_gdf):,}")
+                combined_gdf = pd.concat([existing_gdf, gdf], ignore_index=True)
+            else:
+                combined_gdf = gdf
+                
+            # Write working file
+            combined_gdf.to_parquet(temp_working)
+            working_blob.upload_from_filename(temp_working)
+            logger.info(f"Updated working file now has {len(combined_gdf):,} features")
+            
+            # If sync complete, create final file
+            if self.is_sync_complete:
+                logger.info(f"Sync complete - writing final file with {len(combined_gdf):,} features")
+                final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
+                final_blob.upload_from_filename(temp_working)
+                working_blob.delete()
             
             # Cleanup
-            os.remove(temp_file)
-            
-            logger.info(f"Successfully wrote {len(gdf)} features to storage")
+            os.remove(temp_working)
             
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
