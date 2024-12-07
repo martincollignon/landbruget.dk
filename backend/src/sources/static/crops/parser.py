@@ -1,7 +1,7 @@
 import pandas as pd
 import pdfplumber
 from pathlib import Path
-from base import Source
+from ....base import Source
 import os
 
 class CropCodes(Source):
