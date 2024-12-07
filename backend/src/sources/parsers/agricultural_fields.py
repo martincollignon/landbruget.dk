@@ -237,7 +237,11 @@ class AgriculturalFields(Source):
             return
         
         try:
+            # Create GeoDataFrame
             gdf = gpd.GeoDataFrame(features, crs="EPSG:25832")
+            
+            # Clean up column names - replace dots and parentheses with underscores
+            gdf.columns = [col.replace('.', '_').replace('(', '_').replace(')', '_') for col in gdf.columns]
             
             # Validate and transform geometries
             gdf = validate_and_transform_geometries(gdf, 'agricultural_fields')
