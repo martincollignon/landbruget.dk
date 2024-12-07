@@ -2,6 +2,7 @@ import pandas as pd
 import pdfplumber
 from pathlib import Path
 from base import Source
+import os
 
 class CropCodes(Source):
     """Danish Agricultural Crop Codes parser"""
@@ -122,11 +123,15 @@ class CropCodes(Source):
         """Sync the crop codes data"""
         df = await self.fetch()
         
-        # Convert DataFrame to JSON for storage
-        data = df.to_json(orient='records', force_ascii=False)
+        # Write to temporary local parquet file
+        temp_file = "/tmp/crop_codes_current.parquet"
+        df.to_parquet(temp_file)
         
         # Upload to storage
-        blob = self.bucket.blob(f'crops/crop_codes.json')
-        blob.upload_from_string(data, content_type='application/json')
+        blob = self.bucket.blob(f'raw/crops/current.parquet')
+        blob.upload_from_filename(temp_file)
+        
+        # Cleanup
+        os.remove(temp_file)
         
         return len(df) 
