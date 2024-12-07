@@ -106,7 +106,8 @@ class Wetlands(Source):
         self.is_sync_complete = False
         
         try:
-            async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
+            timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 total_features = await self._get_total_count(session)
                 logger.info(f"Found {total_features:,} total features")
                 
