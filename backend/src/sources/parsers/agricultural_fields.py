@@ -152,6 +152,7 @@ class AgriculturalFields(Source):
 
     async def sync(self):
         """Sync agricultural fields data"""
+        self.is_sync_complete = False  # Initialize flag
         logger.info("Starting agricultural fields sync...")
         self.start_time = time.time()
         self.features_processed = 0
@@ -223,9 +224,16 @@ class AgriculturalFields(Source):
                     f"Sync completed. Processed {self.features_processed:,} features "
                     f"in {total_time:.1f}s ({final_speed:.1f} features/second)"
                 )
+                
+                # Set completion flag before final write
+                self.is_sync_complete = True
+                if all_features:
+                    await self.write_to_storage(all_features, 'agricultural_fields')
+                
                 return self.features_processed
                 
         except Exception as e:
+            self.is_sync_complete = False  # Reset on error
             logger.error(f"Error in sync: {str(e)}", exc_info=True)
             return self.features_processed
 
