@@ -329,9 +329,10 @@ class WaterProjects(Source):
 
     async def sync(self):
         """Sync all water project layers"""
-        self.is_sync_complete = False  # Initialize flag
+        logger.info("Starting water projects sync...")
+        self.is_sync_complete = False
         total_processed = 0
-        all_features = []
+        features_batch = []
         
         try:
             async with aiohttp.ClientSession(headers=self.headers) as session:
@@ -344,7 +345,7 @@ class WaterProjects(Source):
                         if service_type == 'arcgis':
                             features = await self._fetch_arcgis_features(session, layer, base_url)
                             if features:
-                                all_features.extend(features)
+                                features_batch.extend(features)
                                 total_processed += len(features)
                                 logger.info(f"Layer {layer}: processed {len(features):,} features")
                             continue
@@ -379,7 +380,7 @@ class WaterProjects(Source):
                                         features.append(parsed)
                             
                             if features:
-                                all_features.extend(features)
+                                features_batch.extend(features)
                                 total_processed += len(features)
                                 logger.info(f"Layer {layer}: processed {len(features):,} features")
                             
@@ -388,24 +389,31 @@ class WaterProjects(Source):
                                 logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
                                 chunk = await self._fetch_chunk(session, layer, start_index)
                                 if chunk:
-                                    all_features.extend(chunk)
+                                    features_batch.extend(chunk)
                                     total_processed += len(chunk)
                                     logger.info(f"Layer {layer}: processed {len(chunk):,} features")
-                    
+                            
+                            # Write batch if it's large enough
+                            if len(features_batch) >= self.storage_batch_size:
+                                logger.info(f"Writing batch of {len(features_batch):,} features")
+                                await self.write_to_storage(features_batch, 'water_projects')
+                                features_batch = []
+                            
                     except Exception as e:
                         logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                         continue
 
-                # Set completion flag before final write
-                self.is_sync_complete = True
-                if all_features:
-                    await self.write_to_storage(all_features, 'water_projects')
+                # Write any remaining features as final batch
+                if features_batch:
+                    logger.info(f"Writing final batch of {len(features_batch):,} features")
+                    self.is_sync_complete = True
+                    await self.write_to_storage(features_batch, 'water_projects')
                 
                 logger.info(f"Sync completed. Total processed: {total_processed:,}")
                 return total_processed
                 
         except Exception as e:
-            self.is_sync_complete = False  # Reset on error
+            self.is_sync_complete = False
             logger.error(f"Error in sync: {str(e)}", exc_info=True)
             return total_processed
 

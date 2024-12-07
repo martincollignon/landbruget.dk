@@ -152,90 +152,49 @@ class AgriculturalFields(Source):
 
     async def sync(self):
         """Sync agricultural fields data"""
-        self.is_sync_complete = False  # Initialize flag
         logger.info("Starting agricultural fields sync...")
         self.start_time = time.time()
         self.features_processed = 0
-        all_features = []
+        self.is_sync_complete = False
         
         try:
             conn = aiohttp.TCPConnector(limit=self.max_concurrent, ssl=self.ssl_context)
             async with aiohttp.ClientSession(timeout=self.timeout_config, connector=conn) as session:
                 total_features = await self._get_total_count(session)
-                if total_features == 0:
-                    logger.error("No features found to sync")
-                    return 0
+                logger.info(f"Found {total_features:,} total features")
                 
-                tasks = []
+                features_batch = []
+                
                 for start_index in range(0, total_features, self.batch_size):
-                    if len(tasks) >= self.max_concurrent:
-                        done, pending = await asyncio.wait(
-                            tasks, 
-                            return_when=asyncio.FIRST_COMPLETED
-                        )
-                        tasks = list(pending)
-                        for task in done:
-                            try:
-                                chunk = await task
-                                if chunk is not None:
-                                    all_features.extend(chunk.to_dict('records'))
-                                    self.features_processed += len(chunk)
-                            except Exception as e:
-                                logger.error(f"Error processing task: {str(e)}")
-                                continue
-                    
-                    await asyncio.sleep(0.1)
-                    
-                    task = asyncio.create_task(self._fetch_chunk(session, start_index))
-                    tasks.append(task)
-                    
-                    if len(all_features) >= self.storage_batch_size:
-                        await self.write_to_storage(all_features, 'agricultural_fields')
-                        self.features_processed += len(all_features)
-                        elapsed = time.time() - self.start_time
-                        speed = self.features_processed / elapsed
-                        remaining = total_features - self.features_processed
-                        eta_minutes = (remaining / speed) / 60 if speed > 0 else 0
+                    chunk = await self._fetch_chunk(session, start_index)
+                    if chunk is not None:
+                        features_batch.extend(chunk.to_dict('records'))
+                        self.features_processed += len(chunk)
                         
-                        logger.info(
-                            f"Progress: {self.features_processed:,}/{total_features:,} "
-                            f"({speed:.1f} features/second, ETA: {eta_minutes:.1f} minutes)"
-                        )
-                        all_features = []
+                        # Write batch if it's large enough or it's the last batch
+                        is_last_batch = (start_index + self.batch_size) >= total_features
+                        if len(features_batch) >= self.storage_batch_size or is_last_batch:
+                            logger.info(f"Writing batch of {len(features_batch):,} features (is_last_batch: {is_last_batch})")
+                            self.is_sync_complete = is_last_batch  # Only set True for last batch
+                            await self.write_to_storage(features_batch, 'agricultural_fields')
+                            features_batch = []  # Clear batch after writing
+                            
+                            elapsed = time.time() - self.start_time
+                            speed = self.features_processed / elapsed
+                            remaining = total_features - self.features_processed
+                            eta_minutes = (remaining / speed) / 60 if speed > 0 else 0
+                            
+                            logger.info(
+                                f"Progress: {self.features_processed:,}/{total_features:,} "
+                                f"({speed:.1f} features/second, ETA: {eta_minutes:.1f} minutes)"
+                            )
                 
-                if tasks:
-                    done, _ = await asyncio.wait(tasks)
-                    for task in done:
-                        try:
-                            chunk = await task
-                            if chunk is not None:
-                                all_features.extend(chunk.to_dict('records'))
-                        except Exception as e:
-                            logger.error(f"Error processing remaining task: {str(e)}")
-                            continue
-                
-                if all_features:
-                    await self.write_to_storage(all_features, 'agricultural_fields')
-                    self.features_processed += len(all_features)
-                
-                total_time = time.time() - self.start_time
-                final_speed = self.features_processed / total_time
-                logger.info(
-                    f"Sync completed. Processed {self.features_processed:,} features "
-                    f"in {total_time:.1f}s ({final_speed:.1f} features/second)"
-                )
-                
-                # Set completion flag before final write
-                self.is_sync_complete = True
-                if all_features:
-                    await self.write_to_storage(all_features, 'agricultural_fields')
-                
+                logger.info(f"Sync completed. Total processed: {self.features_processed:,}")
                 return self.features_processed
                 
         except Exception as e:
-            self.is_sync_complete = False  # Reset on error
-            logger.error(f"Error in sync: {str(e)}", exc_info=True)
-            return self.features_processed
+            logger.error(f"Error in sync: {str(e)}")
+            raise
 
     async def fetch(self):
         return await self.sync()

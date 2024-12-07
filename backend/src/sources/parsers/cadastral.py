@@ -285,35 +285,42 @@ class Cadastral(Source):
 
     async def sync(self):
         """Sync cadastral data to Cloud Storage"""
-        self.is_sync_complete = False  # Initialize flag
         logger.info("Starting cadastral sync...")
+        self.is_sync_complete = False
         
         try:
             async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
                 total_features = await self._get_total_count(session)
-                all_features = []
+                logger.info(f"Found {total_features:,} total features")
+                
+                features_batch = []
                 total_processed = 0
                 
                 for start_index in range(0, total_features, self.page_size):
                     try:
                         chunk = await self._fetch_chunk(session, start_index)
                         if chunk:
-                            all_features.extend(chunk)
+                            features_batch.extend(chunk)
                             total_processed += len(chunk)
-                            logger.info(f"Progress: {total_processed:,}/{total_features:,}")
+                            
+                            # Write batch if it's large enough or it's the last batch
+                            is_last_batch = (start_index + self.page_size) >= total_features
+                            if len(features_batch) >= self.batch_size or is_last_batch:
+                                logger.info(f"Writing batch of {len(features_batch):,} features (is_last_batch: {is_last_batch})")
+                                self.is_sync_complete = is_last_batch
+                                await self.write_to_storage(features_batch, 'cadastral')
+                                features_batch = []
+                                logger.info(f"Progress: {total_processed:,}/{total_features:,}")
+                                
                     except Exception as e:
                         logger.error(f"Error processing batch at {start_index}: {str(e)}")
                         continue
                 
-                # Set completion flag before final write
-                self.is_sync_complete = True
-                if all_features:
-                    await self.write_to_storage(all_features, 'cadastral')
-                    logger.info(f"Sync completed. Total processed: {total_processed:,}")
-                    return total_processed
-                    
+                logger.info(f"Sync completed. Total processed: {total_processed:,}")
+                return total_processed
+                
         except Exception as e:
-            self.is_sync_complete = False  # Reset on error
+            self.is_sync_complete = False
             logger.error(f"Error in sync: {str(e)}")
             raise
 

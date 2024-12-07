@@ -24,6 +24,8 @@ class Source(ABC):
             return
             
         try:
+            logger.info(f"Processing batch of {len(features):,} features")
+            
             # Create new GeoDataFrame from features
             new_gdf = gpd.GeoDataFrame(features, crs="EPSG:25832")
             
@@ -41,31 +43,36 @@ class Source(ABC):
             working_blob = self.bucket.blob(f'raw/{dataset}/working.parquet')
             
             if working_blob.exists():
-                # Download existing working file
+                logger.info("Found existing working file, appending to it...")
                 working_blob.download_to_filename(temp_working)
                 existing_gdf = gpd.read_parquet(temp_working)
+                logger.info(f"Existing working file has {len(existing_gdf):,} features")
                 
                 # Append new data
+                logger.info(f"Appending {len(new_gdf):,} features...")
                 combined_gdf = pd.concat([existing_gdf, new_gdf], ignore_index=True)
+                logger.info(f"Total features after append: {len(combined_gdf):,}")
             else:
+                logger.info("No existing working file, creating new one")
                 combined_gdf = new_gdf
             
             # Write to working file
             combined_gdf.to_parquet(temp_working)
             working_blob.upload_from_filename(temp_working)
+            logger.info(f"Updated working file with {len(combined_gdf):,} total features")
             
             # When sync is complete, copy working to final
-            if self.is_sync_complete:  # We'll need to add this flag
+            if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
+                logger.info(f"Sync complete, writing final file with {len(combined_gdf):,} features")
                 combined_gdf.to_parquet(temp_final)
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_final)
                 working_blob.delete()  # Clean up working file
+                logger.info("Cleaned up working file")
                 os.remove(temp_final)
             
             # Cleanup working file
             os.remove(temp_working)
-            
-            logger.info(f"Successfully wrote {len(new_gdf)} features (total: {len(combined_gdf)})")
             
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
