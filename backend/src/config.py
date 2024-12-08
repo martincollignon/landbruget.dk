@@ -16,7 +16,8 @@ SOURCES = {
         "layer": "natur:kulstof2022",
         "frequency": "static",
         "enabled": True,
-        "bucket": "landbrugsdata-raw-data"
+        "bucket": "landbrugsdata-raw-data",
+        "create_dissolved": True
     },
     "cadastral": {
         "name": "Danish Cadastral Properties",
@@ -38,7 +39,8 @@ SOURCES = {
         "enabled": True,
         "create_combined": True,
         "combined_timeout": 3600,
-        "bucket": "landbrugsdata-raw-data"
+        "bucket": "landbrugsdata-raw-data",
+        "create_dissolved": True
     },
     "crops": {
         "name": "Danish Agricultural Crop Codes",

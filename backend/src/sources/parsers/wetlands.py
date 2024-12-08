@@ -11,6 +11,7 @@ import pandas as pd
 import geopandas as gpd
 import os
 from ..utils.geometry_validator import validate_and_transform_geometries
+from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -176,14 +177,31 @@ class Wetlands(Source):
             working_blob.upload_from_filename(temp_working)
             logger.info(f"Updated working file now has {len(combined_gdf):,} features")
             
-            # If sync complete, create final file
+            # If sync complete, create final files
             if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
-                logger.info(f"Sync complete - writing final file with {len(combined_gdf):,} features")
+                logger.info(f"Sync complete - writing final files")
+                
+                # Write regular final file
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
+                
+                # Create dissolved version
+                logger.info("Creating dissolved version...")
+                dissolved = unary_union(combined_gdf.geometry.values)
+                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
+                
+                # Write dissolved version
+                temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
+                dissolved_gdf.to_parquet(temp_dissolved)
+                dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
+                dissolved_blob.upload_from_filename(temp_dissolved)
+                logger.info("Dissolved version created and saved")
+                
+                # Cleanup
                 working_blob.delete()
+                os.remove(temp_dissolved)
             
-            # Cleanup
+            # Cleanup working file
             if os.path.exists(temp_working):
                 os.remove(temp_working)
             

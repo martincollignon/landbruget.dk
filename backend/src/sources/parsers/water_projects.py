@@ -7,6 +7,7 @@ import logging
 import aiohttp
 from shapely.geometry import Polygon, MultiPolygon
 from shapely import wkt
+from shapely.ops import unary_union
 import geopandas as gpd
 import pandas as pd
 from google.cloud import storage
@@ -227,12 +228,12 @@ class WaterProjects(Source):
     async def write_to_storage(self, features, dataset):
         """Write features to GeoParquet in Cloud Storage"""
         if not features:
-            return 0
-            
+            return
+        
         try:
-            # Create DataFrame from WKT features
-            df = pd.DataFrame([{k:v for k,v in f.items() if k != 'geometry'} for f in features])
-            geometries = [wkt.loads(f['geometry']) for f in features if f.get('geometry')]
+            # Create DataFrame from features
+            df = pd.DataFrame(features)
+            geometries = [wkt.loads(f['geometry']) for f in features]
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
             
             # Validate and transform geometries
@@ -249,23 +250,39 @@ class WaterProjects(Source):
                 combined_gdf = pd.concat([existing_gdf, gdf], ignore_index=True)
             else:
                 combined_gdf = gdf
-                
+            
             # Write working file
             combined_gdf.to_parquet(temp_working)
             working_blob.upload_from_filename(temp_working)
             logger.info(f"Updated working file now has {len(combined_gdf):,} features")
             
-            # If sync complete, create final file
-            if self.is_sync_complete:
-                logger.info(f"Sync complete - writing final file with {len(combined_gdf):,} features")
+            # If sync complete, create final files
+            if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
+                logger.info(f"Sync complete - writing final files")
+                
+                # Write regular final file
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
+                
+                # Create dissolved version
+                logger.info("Creating dissolved version...")
+                dissolved = unary_union(combined_gdf.geometry.values)
+                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
+                
+                # Write dissolved version
+                temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
+                dissolved_gdf.to_parquet(temp_dissolved)
+                dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
+                dissolved_blob.upload_from_filename(temp_dissolved)
+                logger.info("Dissolved version created and saved")
+                
+                # Cleanup
                 working_blob.delete()
+                os.remove(temp_dissolved)
             
-            # Cleanup
-            os.remove(temp_working)
-            
-            return len(combined_gdf)
+            # Cleanup working file
+            if os.path.exists(temp_working):
+                os.remove(temp_working)
             
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
