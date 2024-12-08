@@ -12,6 +12,10 @@ import geopandas as gpd
 import os
 from ..utils.geometry_validator import validate_and_transform_geometries
 from shapely.ops import unary_union
+import dask_geopandas
+import dask.dataframe as dd
+import time
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -185,10 +189,23 @@ class Wetlands(Source):
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
                 
-                # Create dissolved version
-                logger.info("Creating dissolved version...")
-                dissolved = unary_union(combined_gdf.geometry.values)
-                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
+                # Create dissolved version with parallel processing
+                logger.info(f"Starting parallel dissolution of {len(combined_gdf):,} geometries...")
+                logger.info(f"Memory usage before dissolution: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
+                start_time = time.time()
+                
+                # Convert to dask geodataframe (adjust npartitions based on CPU cores)
+                dask_gdf = dask_geopandas.from_geopandas(combined_gdf, npartitions=4)
+                
+                # Perform parallel dissolution
+                dissolved = dask_gdf.dissolve().compute()
+                
+                end_time = time.time()
+                duration_minutes = (end_time - start_time) / 60
+                logger.info(f"Parallel dissolution completed in {duration_minutes:.2f} minutes")
+                logger.info(f"Memory usage after dissolution: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
+                
+                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved.geometry.iloc[0]], crs=combined_gdf.crs)
                 
                 # Write dissolved version
                 temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
