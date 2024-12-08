@@ -12,8 +12,6 @@ import geopandas as gpd
 import os
 from ..utils.geometry_validator import validate_and_transform_geometries
 from shapely.ops import unary_union
-import dask_geopandas
-import dask.dataframe as dd
 import time
 import psutil
 
@@ -195,23 +193,35 @@ class Wetlands(Source):
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
                 
-                # Create dissolved version with parallel processing
-                logger.info(f"Starting parallel dissolution of {len(combined_gdf):,} geometries...")
+                # Create dissolved version using gridcode optimization
+                logger.info(f"Starting optimized dissolution of {len(combined_gdf):,} geometries...")
                 logger.info(f"Memory usage before dissolution: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
                 start_time = time.time()
                 
-                # Convert to dask geodataframe (adjust npartitions based on CPU cores)
-                dask_gdf = dask_geopandas.from_geopandas(combined_gdf, npartitions=4)
+                # Log unique gridcodes
+                unique_grids = combined_gdf['gridcode'].nunique()
+                logger.info(f"Found {unique_grids} unique grid codes")
                 
-                # Perform parallel dissolution
-                dissolved = dask_gdf.dissolve().compute()
+                # First dissolve by gridcode
+                logger.info("Step 1: Dissolving by gridcode...")
+                grid_start = time.time()
+                dissolved_by_grid = combined_gdf.dissolve(by='gridcode')  # gridcode is INTEGER
+                grid_time = time.time() - grid_start
+                logger.info(f"Created {len(dissolved_by_grid)} grid-based polygons in {grid_time:.2f} seconds")
+                
+                # Then union the grid polygons
+                logger.info("Step 2: Performing final union of grid polygons...")
+                union_start = time.time()
+                final_dissolved = unary_union(dissolved_by_grid.geometry.values)
+                union_time = time.time() - union_start
+                logger.info(f"Final union completed in {union_time:.2f} seconds")
                 
                 end_time = time.time()
                 duration_minutes = (end_time - start_time) / 60
                 logger.info(f"Parallel dissolution completed in {duration_minutes:.2f} minutes")
                 logger.info(f"Memory usage after dissolution: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
                 
-                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved.geometry.iloc[0]], crs=combined_gdf.crs)
+                dissolved_gdf = gpd.GeoDataFrame(geometry=[final_dissolved], crs=combined_gdf.crs)
                 
                 # Write dissolved version
                 temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
