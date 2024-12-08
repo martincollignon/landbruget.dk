@@ -118,18 +118,30 @@ class Cadastral(Source):
                     continue
 
                 coords = [float(x) for x in pos_list.text.strip().split()]
+                # Keep the original 3D coordinate handling - take x,y and skip z
                 pairs = [(coords[i], coords[i+1]) 
-                        for i in range(0, len(coords)-2, 2)]
+                        for i in range(0, len(coords), 3)]
 
                 if len(pairs) < 4:
+                    logger.warning(f"Not enough coordinate pairs ({len(pairs)}) to form a polygon")
                     continue
 
                 try:
+                    # Check if the polygon is closed (first point equals last point)
+                    if pairs[0] != pairs[-1]:
+                        pairs.append(pairs[0])  # Close the polygon
+                    
                     polygon = Polygon(pairs)
                     if polygon.is_valid:
                         polygons.append(polygon)
                     else:
-                        logger.warning("Invalid polygon created")
+                        # Try to fix invalid polygon
+                        from shapely.ops import make_valid
+                        fixed_polygon = make_valid(polygon)
+                        if fixed_polygon.geom_type in ('Polygon', 'MultiPolygon'):
+                            polygons.append(fixed_polygon)
+                        else:
+                            logger.warning(f"Could not create valid polygon, got {fixed_polygon.geom_type}")
                 except Exception as e:
                     logger.warning(f"Error creating polygon: {str(e)}")
                     continue
@@ -137,7 +149,15 @@ class Cadastral(Source):
             if not polygons:
                 return None
 
-            final_geom = MultiPolygon(polygons) if len(polygons) > 1 else polygons[0]
+            if len(polygons) == 1:
+                final_geom = polygons[0]
+            else:
+                try:
+                    final_geom = MultiPolygon(polygons)
+                except Exception as e:
+                    logger.warning(f"Error creating MultiPolygon: {str(e)}, falling back to first valid polygon")
+                    final_geom = polygons[0]
+
             return wkt.dumps(final_geom)
 
         except Exception as e:
