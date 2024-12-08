@@ -107,6 +107,12 @@ class Wetlands(Source):
         logger.info("Starting wetlands sync...")
         self.is_sync_complete = False
         
+        # Clean up any existing working files at start
+        working_blob = self.bucket.blob('raw/wetlands/working.parquet')
+        if working_blob.exists():
+            logger.info("Cleaning up existing working file...")
+            working_blob.delete()
+        
         async with aiohttp.ClientSession() as session:
             # Get total count
             params = self._get_params(0)
