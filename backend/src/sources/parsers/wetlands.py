@@ -190,3 +190,33 @@ class Wetlands(Source):
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
             raise
+
+    async def _get_total_count(self, session) -> int:
+        """Get total number of features available"""
+        params = {
+            'f': 'json',
+            'where': '1=1',  # Get all features
+            'returnCountOnly': 'true',
+            'token': self.config['token']
+        }
+        
+        async with session.get(self.config['url'], params=params) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return data['count']
+
+    async def _fetch_chunk(self, session, start_index: int) -> list:
+        """Fetch a chunk of features starting at given index"""
+        params = {
+            'f': 'json',
+            'where': '1=1',  # Get all features
+            'outFields': '*',
+            'resultOffset': start_index,
+            'resultRecordCount': self.config['page_size'],
+            'token': self.config['token']
+        }
+        
+        async with session.get(self.config['url'], params=params) as response:
+            response.raise_for_status()
+            data = await response.json()
+            return data['features']
