@@ -7,13 +7,10 @@ from shapely.geometry import Polygon
 import backoff
 from aiohttp import ClientError, ClientTimeout
 from ...base import Source
-from ..utils.geometry_validator import validate_and_transform_geometries
-import shapely as wkt
 import pandas as pd
 import geopandas as gpd
-from google.cloud import storage
 import os
-from datetime import datetime
+from ..utils.geometry_validator import validate_and_transform_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -105,42 +102,42 @@ class Wetlands(Source):
         logger.info("Starting wetlands sync...")
         self.is_sync_complete = False
         
-        try:
-            timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                total_features = await self._get_total_count(session)
-                logger.info(f"Found {total_features:,} total features")
+        async with aiohttp.ClientSession() as session:
+            # Get total count
+            params = self._get_params(0)
+            async with session.get(self.config['url'], params=params) as response:
+                text = await response.text()
+                root = ET.fromstring(text)
+                total_features = int(root.get('numberMatched', '0'))
+                logger.info(f"Total available features: {total_features:,}")
                 
-                features_batch = []
-                total_processed = 0
+                # Process first batch
+                features = [
+                    self._parse_feature(f) 
+                    for f in root.findall('.//natur:kulstof2022', self.namespaces)
+                ]
+                features = [f for f in features if f]
                 
-                for start_index in range(0, total_features, self.page_size):
+                if features:
+                    await self.write_to_storage(features, 'wetlands')
+                logger.info(f"Wrote first batch: {len(features)} features")
+                
+                # Process remaining batches
+                total_processed = len(features)
+                for start_index in range(self.batch_size, total_features, self.batch_size):
                     try:
                         chunk = await self._fetch_chunk(session, start_index)
                         if chunk:
-                            features_batch.extend(chunk)
+                            self.is_sync_complete = (start_index + self.batch_size) >= total_features
+                            await self.write_to_storage(chunk, 'wetlands')
                             total_processed += len(chunk)
-                            
-                            # Write batch if it's large enough or it's the last batch
-                            is_last_batch = (start_index + self.page_size) >= total_features
-                            if len(features_batch) >= self.batch_size or is_last_batch:
-                                logger.info(f"Writing batch of {len(features_batch):,} features (is_last_batch: {is_last_batch})")
-                                self.is_sync_complete = is_last_batch
-                                await self.write_to_storage(features_batch, 'wetlands')
-                                features_batch = []
-                                logger.info(f"Progress: {total_processed:,}/{total_features:,}")
-                                
+                            logger.info(f"Progress: {total_processed:,}/{total_features:,}")
                     except Exception as e:
                         logger.error(f"Error processing batch at {start_index}: {str(e)}")
                         continue
-                
-                logger.info(f"Sync completed. Total processed: {total_processed:,}")
-                return total_processed
-                
-        except Exception as e:
-            self.is_sync_complete = False
-            logger.error(f"Error in sync: {str(e)}")
-            raise
+        
+        logger.info(f"Sync completed. Total processed: {total_processed:,}")
+        return total_processed
 
     async def fetch(self):
         """Not implemented - using sync() directly"""
@@ -193,31 +190,3 @@ class Wetlands(Source):
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
             raise
-
-    async def _get_total_count(self, session) -> int:
-        """Get total number of features available"""
-        params = {
-            'f': 'json',
-            'where': '1=1',  # Get all features
-            'returnCountOnly': 'true'
-        }
-        
-        async with session.get(self.config['url'], params=params) as response:
-            response.raise_for_status()
-            data = await response.json()
-            return data['count']
-
-    async def _fetch_chunk(self, session, start_index: int) -> list:
-        """Fetch a chunk of features starting at given index"""
-        params = {
-            'f': 'json',
-            'where': '1=1',  # Get all features
-            'outFields': '*',
-            'resultOffset': start_index,
-            'resultRecordCount': self.config['page_size']
-        }
-        
-        async with session.get(self.config['url'], params=params) as response:
-            response.raise_for_status()
-            data = await response.json()
-            return data['features']
