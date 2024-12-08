@@ -48,7 +48,7 @@ jobs:
         # Deploy sync jobs
         declare -A jobs=(
           ["cadastral-sync"]="4|8Gi|DB_PASSWORD=db-password:latest,DATAFORDELER_USERNAME=datafordeler-username:latest,DATAFORDELER_PASSWORD=datafordeler-password:latest|cadastral"
-          ["wetlands-sync"]="4|8Gi|DB_PASSWORD=db-password:latest|wetlands"
+          ["wetlands-sync"]="4|16Gi|DB_PASSWORD=db-password:latest|wetlands"
           ["water-projects-sync"]="4|8Gi|DB_PASSWORD=db-password:latest|water_projects"
           ["agricultural-fields-sync"]="4|8Gi|DB_PASSWORD=db-password:latest|agricultural_fields"
         )
