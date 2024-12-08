@@ -150,15 +150,17 @@ class Wetlands(Source):
         """Write features to GeoParquet in Cloud Storage"""
         if not features:
             return
-            
+        
         try:
-            # Create DataFrame from GeoJSON features
+            # Create DataFrame from features properties
             df = pd.DataFrame([f['properties'] for f in features])
             geometries = [Polygon(f['geometry']['coordinates'][0]) for f in features]
+            
+            # Create GeoDataFrame with original CRS
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
             
             # Validate and transform geometries
-            gdf = validate_and_transform_geometries(gdf, dataset)
+            gdf = validate_and_transform_geometries(gdf, 'wetlands')
             
             # Handle working/final files
             temp_working = f"/tmp/{dataset}_working.parquet"
@@ -178,14 +180,15 @@ class Wetlands(Source):
             logger.info(f"Updated working file now has {len(combined_gdf):,} features")
             
             # If sync complete, create final file
-            if self.is_sync_complete:
+            if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
                 logger.info(f"Sync complete - writing final file with {len(combined_gdf):,} features")
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
                 working_blob.delete()
             
             # Cleanup
-            os.remove(temp_working)
+            if os.path.exists(temp_working):
+                os.remove(temp_working)
             
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
@@ -196,8 +199,7 @@ class Wetlands(Source):
         params = {
             'f': 'json',
             'where': '1=1',  # Get all features
-            'returnCountOnly': 'true',
-            'token': self.config['token']
+            'returnCountOnly': 'true'
         }
         
         async with session.get(self.config['url'], params=params) as response:
@@ -212,8 +214,7 @@ class Wetlands(Source):
             'where': '1=1',  # Get all features
             'outFields': '*',
             'resultOffset': start_index,
-            'resultRecordCount': self.config['page_size'],
-            'token': self.config['token']
+            'resultRecordCount': self.config['page_size']
         }
         
         async with session.get(self.config['url'], params=params) as response:
