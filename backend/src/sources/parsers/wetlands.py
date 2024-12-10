@@ -263,3 +263,29 @@ class Wetlands(Source):
     async def fetch(self):
         """Not implemented - using sync() directly"""
         raise NotImplementedError("This source uses sync() directly")
+
+    async def _fetch_chunk(self, session, start_index):
+        """Fetch a chunk of features starting at the given index"""
+        try:
+            async with self.request_semaphore:
+                params = self._get_params(start_index)
+                async with session.get(
+                    self.config['url'], 
+                    params=params, 
+                    timeout=self.request_timeout
+                ) as response:
+                    text = await response.text()
+                    root = ET.fromstring(text)
+                    
+                    features = [
+                        self._parse_feature(f) 
+                        for f in root.findall('.//natur:kulstof2022', self.namespaces)
+                    ]
+                    return [f for f in features if f]
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout fetching batch at {start_index}")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching batch at {start_index}: {str(e)}")
+            return None
