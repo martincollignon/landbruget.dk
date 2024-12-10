@@ -3,10 +3,7 @@ import asyncio
 import xml.etree.ElementTree as ET
 import logging
 import aiohttp
-from shapely.geometry import Polygon, MultiPolygon, LineString
-from shapely.ops import linemerge, polygonize
-from shapely.wkb import dumps
-import backoff
+from shapely.geometry import Polygon, MultiPolygon
 from aiohttp import ClientError
 from ...base import Source
 import pandas as pd
@@ -34,6 +31,51 @@ class Wetlands(Source):
         
         self.request_semaphore = asyncio.Semaphore(self.max_concurrent)
 
+    def analyze_geometry(self, geom):
+        """Analyze a single geometry for grid characteristics"""
+        bounds = geom.bounds
+        width = bounds[2] - bounds[0]
+        height = bounds[3] - bounds[1]
+        area = width * height
+        
+        # Check grid alignment
+        vertices = list(geom.exterior.coords)
+        is_grid_aligned = all(
+            abs(round(coord / 10) * 10 - coord) < 0.01
+            for vertex in vertices
+            for coord in vertex
+        )
+        
+        return {
+            'width': width,
+            'height': height,
+            'area': area,
+            'grid_aligned': is_grid_aligned,
+            'vertices': len(vertices)
+        }
+
+    def log_geometry_statistics(self, gdf):
+        """Analyze and log statistics about the geometries"""
+        stats = []
+        for geom in gdf.geometry:
+            stats.append(self.analyze_geometry(geom))
+        
+        # Convert to DataFrame for easy analysis
+        stats_df = pd.DataFrame(stats)
+        
+        # Unique dimensions
+        dimensions = Counter(zip(stats_df['width'], stats_df['height']))
+        
+        logger.info("Geometry Statistics:")
+        logger.info(f"Total features: {len(stats_df)}")
+        logger.info("\nUnique dimensions (width x height, count):")
+        for (width, height), count in dimensions.most_common():
+            logger.info(f"{width:.1f}m x {height:.1f}m: {count} features")
+        
+        logger.info(f"\nNon-grid-aligned features: {sum(~stats_df['grid_aligned'])}")
+        logger.info(f"Average vertices per feature: {stats_df['vertices'].mean():.1f}")
+        logger.info(f"Total area covered: {stats_df['area'].sum() / 1_000_000:.2f} km²")
+
     def _get_params(self, start_index=0):
         """Get WFS request parameters"""
         return {
@@ -52,7 +94,12 @@ class Wetlands(Source):
             coords = geom_elem.find('.//gml:posList', self.namespaces).text.split()
             coords = [(float(coords[i]), float(coords[i + 1])) 
                      for i in range(0, len(coords), 2)]
-            return Polygon(coords)
+            poly = Polygon(coords)
+            
+            # Ensure the polygon is valid
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            return poly
         except Exception as e:
             logger.error(f"Error parsing geometry: {str(e)}")
             return None
@@ -80,37 +127,14 @@ class Wetlands(Source):
             logger.error(f"Error parsing feature: {str(e)}")
             return None
 
-    @backoff.on_exception(
-        backoff.expo,
-        (ClientError, asyncio.TimeoutError),
-        max_tries=3
-    )
-    async def _fetch_chunk(self, session, start_index):
-        """Fetch a chunk of features with retries"""
-        async with self.request_semaphore:
-            params = self._get_params(start_index)
-            async with session.get(self.config['url'], params=params) as response:
-                response.raise_for_status()
-                text = await response.text()
-                root = ET.fromstring(text)
-                
-                features = []
-                for feature_elem in root.findall('.//natur:kulstof2022', self.namespaces):
-                    feature = self._parse_feature(feature_elem)
-                    if feature:
-                        features.append(feature)
-                
-                return features
-
     async def sync(self):
         """Sync wetlands data to Cloud Storage"""
         logger.info("Starting wetlands sync...")
         self.is_sync_complete = False
         
-        # Clean up any existing working files at start
+        # Clean up any existing working files
         working_blob = self.bucket.blob('raw/wetlands/working.parquet')
         if working_blob.exists():
-            logger.info("Cleaning up existing working file...")
             working_blob.delete()
         
         async with aiohttp.ClientSession() as session:
@@ -122,7 +146,6 @@ class Wetlands(Source):
                 total_features = int(root.get('numberMatched', '0'))
                 logger.info(f"Total available features: {total_features:,}")
                 
-                # Process first batch
                 features = [
                     self._parse_feature(f) 
                     for f in root.findall('.//natur:kulstof2022', self.namespaces)
@@ -133,7 +156,6 @@ class Wetlands(Source):
                     await self.write_to_storage(features, 'wetlands')
                 logger.info(f"Wrote first batch: {len(features)} features")
                 
-                # Process remaining batches
                 total_processed = len(features)
                 for start_index in range(self.batch_size, total_features, self.batch_size):
                     try:
@@ -150,24 +172,20 @@ class Wetlands(Source):
         logger.info(f"Sync completed. Total processed: {total_processed:,}")
         return total_processed
 
-    async def fetch(self):
-        """Not implemented - using sync() directly"""
-        raise NotImplementedError("This source uses sync() directly") 
-
     async def write_to_storage(self, features, dataset):
         """Write features to GeoParquet in Cloud Storage"""
         if not features:
             return
         
         try:
-            # Create DataFrame from features properties
+            # Create DataFrame
             df = pd.DataFrame([f['properties'] for f in features])
             geometries = [Polygon(f['geometry']['coordinates'][0]) for f in features]
             
-            # Create GeoDataFrame with original CRS - keep in 25832 for grid operations
+            # Create GeoDataFrame
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
             
-            # Handle working/final files (still in original CRS)
+            # Handle working/final files
             temp_working = f"/tmp/{dataset}_working.parquet"
             working_blob = self.bucket.blob(f'raw/{dataset}/working.parquet')
             
@@ -186,53 +204,49 @@ class Wetlands(Source):
             
             # If sync complete, create final files
             if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
-                logger.info(f"Sync complete - writing final files")
+                logger.info("Sync complete - analyzing input geometries...")
+                self.log_geometry_statistics(combined_gdf)
                 
-                logger.info(f"Starting merge of {len(combined_gdf):,} grid-cell features...")
-                logger.info(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
+                logger.info(f"Starting merge of {len(combined_gdf):,} features...")
                 start_time = time.time()
                 
-                # Extract all boundaries as LineStrings
-                logger.info("Extracting boundaries...")
-                boundaries = combined_gdf.geometry.boundary
+                # Validate geometries
+                logger.info("Validating geometries...")
+                combined_gdf.geometry = combined_gdf.geometry.make_valid()
                 
-                # Count occurrences of each boundary
-                logger.info("Finding shared boundaries...")
-                boundary_counts = Counter(dumps(geom, hex=True) for geom in boundaries)
+                # Simple dissolve since geometries are already grid-aligned
+                logger.info("Dissolving geometries...")
+                dissolved_gdf = combined_gdf.dissolve()
                 
-                # Keep only unique boundaries (appear once)
-                logger.info("Removing shared boundaries...")
-                unique_boundaries = [
-                    boundary for boundary, count in zip(boundaries, 
-                        [boundary_counts[dumps(b, hex=True)] for b in boundaries])
-                    if count == 1
-                ]
+                # Explode any multipolygons
+                if dissolved_gdf.geometry.iloc[0].geom_type == 'MultiPolygon':
+                    logger.info("Exploding MultiPolygon into separate polygons...")
+                    dissolved_gdf = dissolved_gdf.explode(index_parts=True).reset_index(drop=True)
                 
-                # Merge boundaries into a single geometry
-                logger.info("Merging boundaries...")
-                merged_boundaries = linemerge(unique_boundaries)
+                # Simplify while maintaining grid alignment
+                logger.info("Simplifying geometries...")
+                dissolved_gdf.geometry = dissolved_gdf.geometry.simplify(tolerance=1.0)
                 
-                # Create polygons from remaining boundaries
-                logger.info("Creating polygons from remaining boundaries...")
-                final_polys = list(polygonize(merged_boundaries))
-                
-                logger.info(f"Created {len(final_polys):,} merged polygons")
-                logger.info(f"Reduced from {len(combined_gdf):,} grid cells")
-                
-                # Create final GeoDataFrame
-                dissolved_gdf = gpd.GeoDataFrame(geometry=final_polys, crs="EPSG:25832")
+                # Add wetland_id
                 dissolved_gdf['wetland_id'] = range(1, len(dissolved_gdf) + 1)
                 
+                logger.info(f"Created {len(dissolved_gdf):,} merged polygons")
+                logger.info(f"Reduced from {len(combined_gdf):,} grid cells")
+                logger.info(f"Processing took {time.time() - start_time:.2f} seconds")
+                
+                # Log statistics for the dissolved geometries
+                logger.info("\nAnalyzing dissolved geometries:")
+                self.log_geometry_statistics(dissolved_gdf)
+                
+                # Transform and validate final geometries
                 logger.info("Transforming geometries to BigQuery-compatible CRS...")
                 dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, 'wetlands')
-                logger.info(f"Final CRS: {dissolved_gdf.crs}")
                 
                 # Write dissolved version
                 temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
                 dissolved_gdf.to_parquet(temp_dissolved)
                 dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
                 dissolved_blob.upload_from_filename(temp_dissolved)
-                logger.info(f"Dissolved version created and saved with {len(dissolved_gdf)} features")
                 
                 # Cleanup
                 working_blob.delete()
@@ -245,3 +259,7 @@ class Wetlands(Source):
         except Exception as e:
             logger.error(f"Error writing to storage: {str(e)}")
             raise
+
+    async def fetch(self):
+        """Not implemented - using sync() directly"""
+        raise NotImplementedError("This source uses sync() directly")
