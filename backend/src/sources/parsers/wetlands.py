@@ -210,22 +210,102 @@ class Wetlands(Source):
                 logger.info(f"Starting merge of {len(combined_gdf):,} features...")
                 start_time = time.time()
                 
-                # Validate geometries
-                logger.info("Validating geometries...")
-                combined_gdf.geometry = combined_gdf.geometry.make_valid()
+                # Extract all edges
+                logger.info("Extracting edges...")
+                edges = []
+                total_area = 0  # For validation
+                for geom in combined_gdf.geometry:
+                    total_area += geom.area
+                    coords = list(geom.exterior.coords)
+                    for i in range(len(coords)-1):
+                        # Sort coordinates to ensure same edge from different directions matches
+                        # Convert to tuple for hashing
+                        p1 = coords[i]
+                        p2 = coords[i+1]
+                        if p1 < p2:
+                            edge = (p1, p2)
+                        else:
+                            edge = (p2, p1)
+                        edges.append(edge)
                 
-                # Simple dissolve since geometries are already grid-aligned
-                logger.info("Dissolving geometries...")
-                dissolved_gdf = combined_gdf.dissolve()
+                # Count edge occurrences
+                logger.info("Counting edges...")
+                edge_counts = Counter(edges)
                 
-                # Explode any multipolygons
-                if dissolved_gdf.geometry.iloc[0].geom_type == 'MultiPolygon':
-                    logger.info("Exploding MultiPolygon into separate polygons...")
-                    dissolved_gdf = dissolved_gdf.explode(index_parts=True).reset_index(drop=True)
+                # Keep only boundary edges (appearing once)
+                logger.info("Finding boundary edges...")
+                boundary_edges = [edge for edge, count in edge_counts.items() if count == 1]
                 
-                # Simplify while maintaining grid alignment
-                logger.info("Simplifying geometries...")
-                dissolved_gdf.geometry = dissolved_gdf.geometry.simplify(tolerance=1.0)
+                logger.info(f"Found {len(boundary_edges)} boundary edges")
+                logger.info(f"Removed {len(edges) - len(boundary_edges)} shared edges")
+                
+                # Create a lookup of connected points
+                logger.info("Building edge connections...")
+                point_connections = {}
+                for start, end in boundary_edges:
+                    if start not in point_connections:
+                        point_connections[start] = []
+                    if end not in point_connections:
+                        point_connections[end] = []
+                    point_connections[start].append(end)
+                    point_connections[end].append(start)
+                
+                # Find closed rings (polygons)
+                logger.info("Reconstructing polygons...")
+                polygons = []
+                used_edges = set()
+                
+                def find_next_point(current, start, ring):
+                    """Find next point in the ring"""
+                    for next_point in point_connections[current]:
+                        edge = (min(current, next_point), max(current, next_point))
+                        if edge not in used_edges:
+                            used_edges.add(edge)
+                            ring.append(next_point)
+                            if next_point == start:
+                                return True
+                            if find_next_point(next_point, start, ring):
+                                return True
+                            ring.pop()
+                            used_edges.remove(edge)
+                    return False
+                
+                # Start with any unused edge
+                while point_connections:
+                    start_point = next(iter(point_connections))
+                    ring = [start_point]
+                    find_next_point(start_point, start_point, ring)
+                    
+                    if len(ring) > 3:  # Valid polygon needs at least 4 points
+                        ring.append(ring[0])  # Close the ring
+                        try:
+                            poly = Polygon(ring)
+                            if poly.is_valid and poly.area > 0:
+                                polygons.append(poly)
+                        except Exception as e:
+                            logger.warning(f"Failed to create polygon: {e}")
+                    
+                    # Remove used points from connections
+                    for point in ring:
+                        if point in point_connections:
+                            del point_connections[point]
+                
+                # Create new GeoDataFrame
+                dissolved_gdf = gpd.GeoDataFrame(
+                    geometry=polygons,
+                    crs=combined_gdf.crs
+                )
+                
+                # Validate total area
+                new_total_area = dissolved_gdf.geometry.area.sum()
+                area_diff = abs(total_area - new_total_area)
+                logger.info(f"Area validation:")
+                logger.info(f"Original area: {total_area:.1f} m²")
+                logger.info(f"New area: {new_total_area:.1f} m²")
+                logger.info(f"Difference: {area_diff:.1f} m² ({(area_diff/total_area)*100:.4f}%)")
+                
+                if area_diff/total_area > 0.01:  # More than 1% difference
+                    logger.warning("Area difference exceeds 1% - please verify results")
                 
                 # Add wetland_id
                 dissolved_gdf['wetland_id'] = range(1, len(dissolved_gdf) + 1)
