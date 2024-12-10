@@ -202,22 +202,16 @@ class Wetlands(Source):
                 logger.info(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
                 start_time = time.time()
                 
-                # Extract boundaries
-                logger.info("Extracting boundaries...")
+                # Get unified boundaries directly
+                logger.info("Creating unified boundaries...")
                 boundary_start = time.time()
-                boundaries = combined_gdf.geometry.boundary
-                logger.info(f"Boundaries extracted in {time.time() - boundary_start:.2f} seconds")
+                unified_boundary = combined_gdf.geometry.boundary.unary_union
+                logger.info(f"Unified boundaries created in {time.time() - boundary_start:.2f} seconds")
                 
-                # Merge lines
-                logger.info("Merging boundaries...")
-                merge_start = time.time()
-                merged = linemerge(boundaries)
-                logger.info(f"Boundaries merged in {time.time() - merge_start:.2f} seconds")
-                
-                # Create polygons
-                logger.info("Creating polygons from merged boundaries...")
+                # Create polygons from unified boundaries
+                logger.info("Creating polygons from unified boundaries...")
                 poly_start = time.time()
-                final_poly = unary_union(list(polygonize(merged)))
+                final_poly = unary_union(list(polygonize(unified_boundary)))
                 logger.info(f"Polygons created in {time.time() - poly_start:.2f} seconds")
                 
                 end_time = time.time()
