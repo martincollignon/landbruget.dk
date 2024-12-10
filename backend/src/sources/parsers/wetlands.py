@@ -191,31 +191,26 @@ class Wetlands(Source):
             if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
                 logger.info(f"Sync complete - writing final files")
                 
-                # Write regular final file (transform this one)
-                final_gdf = validate_and_transform_geometries(combined_gdf.copy(), 'wetlands')
-                final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
-                final_gdf.to_parquet(temp_working)
-                final_blob.upload_from_filename(temp_working)
-                
-                # Do grid operations in original CRS
-                logger.info(f"Starting efficient merge of {len(combined_gdf):,} grid cells in EPSG:25832...")
+                # Do operations in original CRS
+                logger.info(f"Starting merge of {len(combined_gdf):,} adjacent features in EPSG:25832...")
                 logger.info(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
                 start_time = time.time()
                 
-                # Get unified boundaries directly
-                logger.info("Creating unified boundaries...")
+                # Get boundaries to find where features touch
+                logger.info("Finding adjacent features...")
                 boundary_start = time.time()
-                unified_boundary = combined_gdf.geometry.boundary.unary_union
-                logger.info(f"Unified boundaries created in {time.time() - boundary_start:.2f} seconds")
+                boundaries = combined_gdf.geometry.boundary.unary_union
                 
-                # Create polygons from unified boundaries (keep separate)
-                logger.info("Creating polygons from unified boundaries...")
-                poly_start = time.time()
-                final_polys = list(polygonize(unified_boundary))
-                logger.info(f"Created {len(final_polys)} separate dissolved polygons in {time.time() - poly_start:.2f} seconds")
+                # Create polygons where features share boundaries
+                logger.info("Merging adjacent features...")
+                merge_start = time.time()
+                final_polys = list(polygonize(boundaries))
+                logger.info(f"Created {len(final_polys):,} features after merging adjacent areas")
+                logger.info(f"Reduced from {len(combined_gdf):,} original features")
+                logger.info(f"Merge completed in {time.time() - merge_start:.2f} seconds")
                 
                 end_time = time.time()
-                logger.info(f"Grid operations completed in {(end_time - start_time) / 60:.2f} minutes")
+                logger.info(f"Operations completed in {(end_time - start_time) / 60:.2f} minutes")
                 
                 # Create final GeoDataFrame with multiple features
                 dissolved_gdf = gpd.GeoDataFrame(geometry=final_polys, crs="EPSG:25832")
