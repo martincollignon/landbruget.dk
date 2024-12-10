@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 import logging
 import aiohttp
 from shapely.geometry import Polygon, MultiPolygon, LineString
-from shapely.ops import linemerge
+from shapely.ops import linemerge, polygonize
 from shapely.wkb import dumps
 import backoff
 from aiohttp import ClientError
