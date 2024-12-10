@@ -13,6 +13,7 @@ from ..utils.geometry_validator import validate_and_transform_geometries
 import time
 import psutil
 from collections import Counter
+from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -210,102 +211,58 @@ class Wetlands(Source):
                 logger.info(f"Starting merge of {len(combined_gdf):,} features...")
                 start_time = time.time()
                 
-                # Extract all edges
-                logger.info("Extracting edges...")
-                edges = []
-                total_area = 0  # For validation
-                for geom in combined_gdf.geometry:
-                    total_area += geom.area
-                    coords = list(geom.exterior.coords)
-                    for i in range(len(coords)-1):
-                        # Sort coordinates to ensure same edge from different directions matches
-                        # Convert to tuple for hashing
-                        p1 = coords[i]
-                        p2 = coords[i+1]
-                        if p1 < p2:
-                            edge = (p1, p2)
-                        else:
-                            edge = (p2, p1)
-                        edges.append(edge)
+                # Create spatial index for efficient neighbor finding
+                logger.info("Creating spatial index...")
+                combined_gdf['idx'] = range(len(combined_gdf))
+                spatial_index = combined_gdf.sindex
                 
-                # Count edge occurrences
-                logger.info("Counting edges...")
-                edge_counts = Counter(edges)
+                # Function to check if two polygons share an edge
+                def shares_edge(geom1, geom2):
+                    intersection = geom1.intersection(geom2)
+                    return (intersection.geom_type == 'LineString' and 
+                           intersection.length >= 10)  # At least one grid cell length
                 
-                # Keep only boundary edges (appearing once)
-                logger.info("Finding boundary edges...")
-                boundary_edges = [edge for edge, count in edge_counts.items() if count == 1]
+                # Find and merge adjacent polygons
+                logger.info("Finding and merging adjacent polygons...")
+                merged = set()  # Keep track of merged polygons
+                merged_polygons = []
                 
-                logger.info(f"Found {len(boundary_edges)} boundary edges")
-                logger.info(f"Removed {len(edges) - len(boundary_edges)} shared edges")
-                
-                # Create a lookup of connected points
-                logger.info("Building edge connections...")
-                point_connections = {}
-                for start, end in boundary_edges:
-                    if start not in point_connections:
-                        point_connections[start] = []
-                    if end not in point_connections:
-                        point_connections[end] = []
-                    point_connections[start].append(end)
-                    point_connections[end].append(start)
-                
-                # Find closed rings (polygons)
-                logger.info("Reconstructing polygons...")
-                polygons = []
-                used_edges = set()
-                
-                def find_next_point(current, start, ring):
-                    """Find next point in the ring"""
-                    for next_point in point_connections[current]:
-                        edge = (min(current, next_point), max(current, next_point))
-                        if edge not in used_edges:
-                            used_edges.add(edge)
-                            ring.append(next_point)
-                            if next_point == start:
-                                return True
-                            if find_next_point(next_point, start, ring):
-                                return True
-                            ring.pop()
-                            used_edges.remove(edge)
-                    return False
-                
-                # Start with any unused edge
-                while point_connections:
-                    start_point = next(iter(point_connections))
-                    ring = [start_point]
-                    find_next_point(start_point, start_point, ring)
+                for idx, row in combined_gdf.iterrows():
+                    if idx in merged:
+                        continue
                     
-                    if len(ring) > 3:  # Valid polygon needs at least 4 points
-                        ring.append(ring[0])  # Close the ring
-                        try:
-                            poly = Polygon(ring)
-                            if poly.is_valid and poly.area > 0:
-                                polygons.append(poly)
-                        except Exception as e:
-                            logger.warning(f"Failed to create polygon: {e}")
+                    # Find potential neighbors using spatial index
+                    bounds = row.geometry.bounds
+                    possible_matches_idx = list(spatial_index.intersection(bounds))
+                    possible_matches = combined_gdf.iloc[possible_matches_idx]
                     
-                    # Remove used points from connections
-                    for point in ring:
-                        if point in point_connections:
-                            del point_connections[point]
+                    # Start with current polygon
+                    current_group = [row.geometry]
+                    merged.add(idx)
+                    
+                    # Check each potential neighbor
+                    for match_idx, match_row in possible_matches.iterrows():
+                        if match_idx != idx and match_idx not in merged:
+                            if shares_edge(row.geometry, match_row.geometry):
+                                current_group.append(match_row.geometry)
+                                merged.add(match_idx)
+                    
+                    # Merge the group if we found any adjacent polygons
+                    if len(current_group) > 1:
+                        merged_poly = unary_union(current_group)
+                    else:
+                        merged_poly = current_group[0]
+                    
+                    merged_polygons.append(merged_poly)
+                    
+                    if len(merged_polygons) % 1000 == 0:
+                        logger.info(f"Processed {len(merged_polygons)} groups")
                 
-                # Create new GeoDataFrame
+                # Create new GeoDataFrame with merged polygons
                 dissolved_gdf = gpd.GeoDataFrame(
-                    geometry=polygons,
+                    geometry=merged_polygons,
                     crs=combined_gdf.crs
                 )
-                
-                # Validate total area
-                new_total_area = dissolved_gdf.geometry.area.sum()
-                area_diff = abs(total_area - new_total_area)
-                logger.info(f"Area validation:")
-                logger.info(f"Original area: {total_area:.1f} m²")
-                logger.info(f"New area: {new_total_area:.1f} m²")
-                logger.info(f"Difference: {area_diff:.1f} m² ({(area_diff/total_area)*100:.4f}%)")
-                
-                if area_diff/total_area > 0.01:  # More than 1% difference
-                    logger.warning("Area difference exceeds 1% - please verify results")
                 
                 # Add wetland_id
                 dissolved_gdf['wetland_id'] = range(1, len(dissolved_gdf) + 1)
