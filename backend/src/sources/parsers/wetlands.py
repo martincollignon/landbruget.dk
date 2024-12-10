@@ -11,7 +11,9 @@ import pandas as pd
 import geopandas as gpd
 import os
 from ..utils.geometry_validator import validate_and_transform_geometries
-from shapely.ops import unary_union
+from shapely.ops import unary_union, polygonize
+from shapely.validation import make_valid, explain_validity
+from shapely.geometry import MultiPolygon
 import time
 import psutil
 
@@ -193,15 +195,44 @@ class Wetlands(Source):
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
                 
-                logger.info(f"Starting union of {len(combined_gdf):,} adjacent geometries...")
-                logger.info(f"Memory usage before union: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
+                logger.info(f"Starting comprehensive geometry cleanup and union of {len(combined_gdf):,} geometries...")
+                logger.info(f"Memory usage before operations: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
                 start_time = time.time()
                 
-                # Just use unary_union - it's already optimized for this
-                dissolved = unary_union(combined_gdf.geometry.values)
+                # Comprehensive geometry fixes
+                logger.info("Starting comprehensive geometry fixes...")
+                fixed_geometries = []
+                for idx, geom in enumerate(combined_gdf.geometry.values):
+                    # Check validity
+                    if not geom.is_valid:
+                        logger.info(f"Invalid geometry found: {explain_validity(geom)}")
+                        
+                        # Make valid
+                        fixed = make_valid(geom)
+                        
+                        # Handle potential multi-polygons
+                        if isinstance(fixed, MultiPolygon):
+                            # Take largest polygon if we get a multi
+                            largest = max(fixed.geoms, key=lambda x: x.area)
+                            fixed_geometries.append(largest)
+                        else:
+                            fixed_geometries.append(fixed)
+                    else:
+                        fixed_geometries.append(geom)
+                    
+                    # Log progress
+                    if idx % 10000 == 0:
+                        logger.info(f"Fixed {idx:,} geometries...")
+                
+                logger.info("Geometry fixes complete")
+                logger.info(f"Fixed {len(fixed_geometries):,} geometries")
+                
+                # Then do the union
+                logger.info("Performing union...")
+                dissolved = unary_union(fixed_geometries)
                 
                 end_time = time.time()
-                logger.info(f"Union completed in {(end_time - start_time) / 60:.2f} minutes")
+                logger.info(f"All operations completed in {(end_time - start_time) / 60:.2f} minutes")
                 
                 dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
                 
