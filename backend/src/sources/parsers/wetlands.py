@@ -208,18 +208,22 @@ class Wetlands(Source):
                 unified_boundary = combined_gdf.geometry.boundary.unary_union
                 logger.info(f"Unified boundaries created in {time.time() - boundary_start:.2f} seconds")
                 
-                # Create polygons from unified boundaries
+                # Create polygons from unified boundaries (keep separate)
                 logger.info("Creating polygons from unified boundaries...")
                 poly_start = time.time()
-                final_poly = unary_union(list(polygonize(unified_boundary)))
-                logger.info(f"Polygons created in {time.time() - poly_start:.2f} seconds")
+                final_polys = list(polygonize(unified_boundary))
+                logger.info(f"Created {len(final_polys)} separate dissolved polygons in {time.time() - poly_start:.2f} seconds")
                 
                 end_time = time.time()
                 logger.info(f"Grid operations completed in {(end_time - start_time) / 60:.2f} minutes")
                 
-                # Create final GeoDataFrame and transform to BigQuery-compatible CRS
-                dissolved_gdf = gpd.GeoDataFrame(geometry=[final_poly], crs="EPSG:25832")
-                logger.info("Transforming final geometry to BigQuery-compatible CRS...")
+                # Create final GeoDataFrame with multiple features
+                dissolved_gdf = gpd.GeoDataFrame(geometry=final_polys, crs="EPSG:25832")
+                
+                # Add an ID column for tracking
+                dissolved_gdf['wetland_id'] = range(1, len(dissolved_gdf) + 1)
+                
+                logger.info("Transforming geometries to BigQuery-compatible CRS...")
                 dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, 'wetlands')
                 logger.info(f"Final CRS: {dissolved_gdf.crs}")
                 
@@ -228,7 +232,7 @@ class Wetlands(Source):
                 dissolved_gdf.to_parquet(temp_dissolved)
                 dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
                 dissolved_blob.upload_from_filename(temp_dissolved)
-                logger.info("Dissolved version created and saved")
+                logger.info(f"Dissolved version created and saved with {len(dissolved_gdf)} features")
                 
                 # Cleanup
                 working_blob.delete()
