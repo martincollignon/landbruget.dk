@@ -3,22 +3,19 @@ import asyncio
 import xml.etree.ElementTree as ET
 import logging
 import aiohttp
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, MultiPolygon, LineString
+from shapely.ops import linemerge
+from shapely.wkb import dumps
 import backoff
-from aiohttp import ClientError, ClientTimeout
+from aiohttp import ClientError
 from ...base import Source
 import pandas as pd
 import geopandas as gpd
 import os
 from ..utils.geometry_validator import validate_and_transform_geometries
-from shapely.ops import unary_union, polygonize
-from shapely.validation import make_valid, explain_validity
-from shapely.geometry import MultiPolygon
 import time
 import psutil
-from shapely.geometry import LineString
-from shapely.geometry.polygon import orient
-from shapely.ops import linemerge
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -191,31 +188,39 @@ class Wetlands(Source):
             if hasattr(self, 'is_sync_complete') and self.is_sync_complete:
                 logger.info(f"Sync complete - writing final files")
                 
-                # Do operations in original CRS
-                logger.info(f"Starting merge of {len(combined_gdf):,} adjacent features in EPSG:25832...")
+                logger.info(f"Starting merge of {len(combined_gdf):,} grid-cell features...")
                 logger.info(f"Memory usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
                 start_time = time.time()
                 
-                # Get boundaries to find where features touch
-                logger.info("Finding adjacent features...")
-                boundary_start = time.time()
-                boundaries = combined_gdf.geometry.boundary.unary_union
+                # Extract all boundaries as LineStrings
+                logger.info("Extracting boundaries...")
+                boundaries = combined_gdf.geometry.boundary
                 
-                # Create polygons where features share boundaries
-                logger.info("Merging adjacent features...")
-                merge_start = time.time()
-                final_polys = list(polygonize(boundaries))
-                logger.info(f"Created {len(final_polys):,} features after merging adjacent areas")
-                logger.info(f"Reduced from {len(combined_gdf):,} original features")
-                logger.info(f"Merge completed in {time.time() - merge_start:.2f} seconds")
+                # Count occurrences of each boundary
+                logger.info("Finding shared boundaries...")
+                boundary_counts = Counter(dumps(geom, hex=True) for geom in boundaries)
                 
-                end_time = time.time()
-                logger.info(f"Operations completed in {(end_time - start_time) / 60:.2f} minutes")
+                # Keep only unique boundaries (appear once)
+                logger.info("Removing shared boundaries...")
+                unique_boundaries = [
+                    boundary for boundary, count in zip(boundaries, 
+                        [boundary_counts[dumps(b, hex=True)] for b in boundaries])
+                    if count == 1
+                ]
                 
-                # Create final GeoDataFrame with multiple features
+                # Merge boundaries into a single geometry
+                logger.info("Merging boundaries...")
+                merged_boundaries = linemerge(unique_boundaries)
+                
+                # Create polygons from remaining boundaries
+                logger.info("Creating polygons from remaining boundaries...")
+                final_polys = list(polygonize(merged_boundaries))
+                
+                logger.info(f"Created {len(final_polys):,} merged polygons")
+                logger.info(f"Reduced from {len(combined_gdf):,} grid cells")
+                
+                # Create final GeoDataFrame
                 dissolved_gdf = gpd.GeoDataFrame(geometry=final_polys, crs="EPSG:25832")
-                
-                # Add an ID column for tracking
                 dissolved_gdf['wetland_id'] = range(1, len(dissolved_gdf) + 1)
                 
                 logger.info("Transforming geometries to BigQuery-compatible CRS...")
