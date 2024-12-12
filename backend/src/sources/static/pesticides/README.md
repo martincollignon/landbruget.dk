@@ -17,20 +17,20 @@ With the data we also received a file describing the columns and units in the da
 Variable                   |Danish description |English description
 ---------------------------|-------------------|--------------------
 CompanyName                |Virksomhedsnavn
-CompanyRegistrationNumber  |CVR nr.            |
-StreetName                 |Vejnavn            |
-StreetBuildingIdentifier   |vej nummer         |
-FloorIdentifier            |etage              |
+CompanyRegistrationNumber  |CVR nr.
+StreetName                 |Vejnavn
+StreetBuildingIdentifier   |vej nummer
+FloorIdentifier            |etage
 PostCodeIdentifier         |Postnummer         |Postal code
-City                       |By                 |
+City                       |By
 AcreageSize                |Behandlet areal    |Acreage size treated
-AcreageUnit                |Enhed              |
+AcreageUnit                |Enhed
 Name                       |Afgrødenavn        |Crop name
 Code                       |Afgrødekode        |Crop code
 PesticideName              |Navn pesticid
 PesticideRegistrationNumber|Reg. nr. (pesticid)|Pesticide ID number
-DosageQuantity             |Dosis              |
-DosageUnit                 |Enhed dosis        |
+DosageQuantity             |Dosis
+DosageUnit                 |Enhed dosis
 NoPesticides               |Anvender pesticider
 
 ### Units
