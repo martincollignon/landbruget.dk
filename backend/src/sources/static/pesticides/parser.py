@@ -2,6 +2,7 @@ import pandas as pd
 from pathlib import Path
 from ....base import Source
 import os
+import re
 
 class Pesticides(Source):
     """Danish Pesticide Data parser"""
@@ -66,7 +67,6 @@ class Pesticides(Source):
     def _extract_plan_year(self, filename: str) -> str:
         """Extract plan-year from the filename"""
         # Assuming the filename contains the plan-year in the format 'YYYY_YYYY'
-        import re
         match = re.search(r'(\d{4})_(\d{4})', filename)
         if match:
             return f"{match.group(1)}-{match.group(2)}"
