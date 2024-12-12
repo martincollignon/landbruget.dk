@@ -49,5 +49,13 @@ SOURCES = {
         "frequency": "static",
         "enabled": True,
         "bucket": "landbrugsdata-raw-data"
+    },
+    "pesticides": {
+        "name": "Danish Pesticide Application Data",
+        "type": "static",
+        "description": "Pesticide application data from Danish Environmental Protection Agency",
+        "frequency": "static",
+        "enabled": True,
+        "bucket": "landbrugsdata-raw-data"
     }
 }
