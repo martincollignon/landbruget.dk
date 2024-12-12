@@ -49,7 +49,7 @@ class WaterProjects(Source):
         
         self.layers = [
             "N2000_projekter:Hydrologi_E",
-            "N2000_projekter:Hydrologi_F",
+            #"N2000_projekter:Hydrologi_F",
             "Ovrige_projekter:Vandloebsrestaurering_E",
             "Ovrige_projekter:Vandloebsrestaurering_F",
             "Vandprojekter:Fosfor_E_samlet",
