@@ -63,6 +63,16 @@ class Pesticides(Source):
         'NoPesticides': 'no_pesticides'
     }
 
+    def _extract_plan_year(self, filename: str) -> str:
+        """Extract plan-year from the filename"""
+        # Assuming the filename contains the plan-year in the format 'YYYY_YYYY'
+        import re
+        match = re.search(r'(\d{4})_(\d{4})', filename)
+        if match:
+            return f"{match.group(1)}-{match.group(2)}"
+        else:
+            raise ValueError(f"Plan-year not found in filename: {filename}")
+
     def _read_excel_files(self) -> list[pd.DataFrame]:
         """Read all Excel files in the current directory"""
         current_dir = Path(__file__).parent
@@ -72,6 +82,7 @@ class Pesticides(Source):
             try:
                 df = pd.read_excel(file, sheet_name=0, engine='openpyxl')
                 df['source_file'] = file.name
+                df['plan_year'] = self._extract_plan_year(file.name)
                 dfs.append(df)
             except Exception as e:
                 print(f"Error reading {file}: {e}")
