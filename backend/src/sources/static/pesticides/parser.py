@@ -40,6 +40,29 @@ class Pesticides(Source):
         5: 'Tablets'
     }
 
+    # Rename columns to match other sources
+    COLUMN_RENAMING = {
+        'CompanyRegistrationNumber': 'cvr_number',
+        'Name': 'crop_type',
+        'Code': 'crop_code'
+    }
+
+    SNAKE_NAMES = {
+        'CompanyName': 'company_name',
+        'StreetName': 'street_name',
+        'StreetBuildingIdentifier': 'street_building_identifier',
+        'FloorIdentifier': 'floor_identifier',
+        'PostCodeIdentifier': 'post_code_identifier',
+        'City': 'city',
+        'AcreageSize': 'acreage_size',
+        'AcreageUnit': 'acreage_unit',
+        'PesticideName': 'pesticide_name',
+        'PesticideRegistrationNumber': 'pesticide_registration_number',
+        'DosageQuantity': 'dosage_quantity',
+        'DosageUnit': 'dosage_unit',
+        'NoPesticides': 'no_pesticides'
+    }
+
     def _read_excel_files(self) -> list[pd.DataFrame]:
         """Read all Excel files in the current directory"""
         current_dir = Path(__file__).parent
@@ -58,12 +81,20 @@ class Pesticides(Source):
 
         return dfs
 
+    def _rename_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Rename columns based on COLUMN_RENAMING and SNAKE_NAMES"""
+        combined_renaming = {**self.COLUMN_RENAMING, **self.SNAKE_NAMES}
+        return df.rename(columns=combined_renaming)
+
     def _clean_and_standardize(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean and standardize the dataframe"""
         # Ensure all expected columns exist
         missing_cols = set(self.EXPECTED_COLUMNS) - set(df.columns)
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
+
+        # Rename columns
+        df = self._rename_columns(df)
 
         # Map unit codes to readable values
         df['AcreageUnit'] = df['AcreageUnit'].map(self.ACREAGE_UNITS)
