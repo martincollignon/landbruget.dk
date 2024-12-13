@@ -76,7 +76,7 @@ All static sources are updated through manual pull requests:
 - Biogas: Production data and methane leakage reports
 - Fertilizer: Nitrogen data and climate calculations
 - Herd Data: CHR (Central Husbandry Register)
-- Pesticides: Usage statistics (2021-2023)
+- Pesticides: Usage statistics (2010-2023)
 - Pig Movements: International transport (2017-2024)
 - Subsidies: Support schemes and project grants
 - Visa: Agricultural visa statistics
