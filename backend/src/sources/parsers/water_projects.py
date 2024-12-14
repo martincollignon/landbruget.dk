@@ -17,6 +17,8 @@ from aiohttp import ClientError, ClientTimeout
 from dotenv import load_dotenv
 from tqdm import tqdm
 import ssl
+from shapely.validation import explain_validity
+from shapely.geometry.polygon import orient
 
 from ...base import Source
 from ..utils.geometry_validator import validate_and_transform_geometries
@@ -267,13 +269,10 @@ class WaterProjects(Source):
                 try:
                     # Log initial state
                     logger.info(f"Initial CRS: {combined_gdf.crs}")
-                    invalid_count = (~combined_gdf.geometry.is_valid).sum()
-                    logger.info(f"Initial invalid geometries: {invalid_count}")
                     
-                    # Log before dissolve
-                    for idx, geom in enumerate(combined_gdf.geometry):
-                        if not geom.is_valid:
-                            logger.error(f"Invalid geometry {idx} before dissolve: {explain_validity(geom)}")
+                    # Check BigQuery compatibility before dissolve
+                    bq_valid = combined_gdf.geometry.apply(is_valid_for_bigquery)
+                    logger.info(f"Initial BigQuery-invalid geometries: {(~bq_valid).sum()}")
                     
                     # Dissolve
                     dissolved = unary_union(combined_gdf.geometry.values)
@@ -281,27 +280,42 @@ class WaterProjects(Source):
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Check each part
+                        # Check each part for BigQuery validity
+                        dissolved_geoms = []
                         for idx, geom in enumerate(dissolved.geoms):
-                            if not geom.is_valid:
-                                logger.error(f"Invalid dissolved part {idx}: {explain_validity(geom)}")
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=dissolved.geoms, crs=combined_gdf.crs)
+                            if not is_valid_for_bigquery(geom):
+                                logger.error(f"BigQuery-invalid dissolved part {idx}: {explain_validity(geom)}")
+                                # Log ring orientations
+                                if isinstance(geom, Polygon):
+                                    ext_ring = list(geom.exterior.coords)
+                                    logger.error(f"Part {idx} exterior ring orientation: {is_clockwise(ext_ring)}")
+                                    for i, interior in enumerate(geom.interiors):
+                                        int_ring = list(interior.coords)
+                                        logger.error(f"Part {idx} interior ring {i} orientation: {is_clockwise(int_ring)}")
+                            dissolved_geoms.append(geom)
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=dissolved_geoms, crs=combined_gdf.crs)
                     else:
-                        if not dissolved.is_valid:
-                            logger.error(f"Invalid dissolved geometry: {explain_validity(dissolved)}")
+                        if not is_valid_for_bigquery(dissolved):
+                            logger.error(f"BigQuery-invalid dissolved geometry: {explain_validity(dissolved)}")
+                            if isinstance(dissolved, Polygon):
+                                ext_ring = list(dissolved.exterior.coords)
+                                logger.error(f"Exterior ring orientation: {is_clockwise(ext_ring)}")
+                                for i, interior in enumerate(dissolved.interiors):
+                                    int_ring = list(interior.coords)
+                                    logger.error(f"Interior ring {i} orientation: {is_clockwise(int_ring)}")
                         dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
                     
                     # Log before validation
-                    invalid_count = (~dissolved_gdf.geometry.is_valid).sum()
-                    logger.info(f"Invalid geometries before validation: {invalid_count}")
+                    bq_valid = dissolved_gdf.geometry.apply(is_valid_for_bigquery)
+                    logger.info(f"BigQuery-invalid geometries before validation: {(~bq_valid).sum()}")
                     
                     # Validate
                     logger.info("Validating final dissolved geometries...")
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
                     
                     # Log final state
-                    invalid_count = (~dissolved_gdf.geometry.is_valid).sum()
-                    logger.info(f"Final invalid geometries: {invalid_count}")
+                    bq_valid = dissolved_gdf.geometry.apply(is_valid_for_bigquery)
+                    logger.info(f"Final BigQuery-invalid geometries: {(~bq_valid).sum()}")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
@@ -495,3 +509,66 @@ class WaterProjects(Source):
     async def fetch(self):
         """Implement abstract method - using sync() instead"""
         return await self.sync() 
+
+def is_clockwise(coords):
+    """Check if a ring is clockwise oriented"""
+    # Implementation of shoelace formula
+    area = 0
+    for i in range(len(coords)-1):
+        j = (i + 1) % len(coords)
+        area += coords[i][0] * coords[j][1]
+        area -= coords[j][0] * coords[i][1]
+    return area > 0
+
+def is_valid_for_bigquery(geom) -> bool:
+    """
+    Check if geometry meets BigQuery geography requirements:
+    - Must be valid (no self-intersections)
+    - Outer rings must be clockwise
+    - Inner rings must be counter-clockwise
+    - No duplicate vertices
+    - No crossing edges
+    """
+    try:
+        if not geom.is_valid:
+            return False
+            
+        if isinstance(geom, (Polygon, MultiPolygon)):
+            # Check each polygon
+            polygons = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
+            
+            for poly in polygons:
+                # Check exterior ring
+                ext_coords = list(poly.exterior.coords)
+                if len(ext_coords) < 4:  # Need at least 4 points (first = last)
+                    return False
+                    
+                # Exterior must be clockwise
+                if not is_clockwise(ext_coords):
+                    return False
+                    
+                # Check for duplicate consecutive vertices
+                for i in range(len(ext_coords)-1):
+                    if ext_coords[i] == ext_coords[i+1]:
+                        return False
+                
+                # Check interior rings
+                for interior in poly.interiors:
+                    int_coords = list(interior.coords)
+                    if len(int_coords) < 4:
+                        return False
+                    
+                    # Interior must be counter-clockwise
+                    if is_clockwise(int_coords):
+                        return False
+                    
+                    # Check for duplicate consecutive vertices in interior
+                    for i in range(len(int_coords)-1):
+                        if int_coords[i] == int_coords[i+1]:
+                            return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error checking BigQuery validity: {str(e)}")
+        return False
