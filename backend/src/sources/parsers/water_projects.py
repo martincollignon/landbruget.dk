@@ -268,9 +268,20 @@ class WaterProjects(Source):
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
                 try:
-                    # Dissolve using already validated geometries
+                    # Check what we got from dissolve
                     dissolved = unary_union(combined_gdf.geometry.values)
-                    dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
+                    logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
+                    
+                    # If it's a MultiPolygon, split into separate polygons
+                    if dissolved.geom_type == 'MultiPolygon':
+                        logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
+                        # Create a row for each polygon
+                        geometries = list(dissolved.geoms)
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:25832")
+                        logger.info(f"Created GeoDataFrame with {len(dissolved_gdf)} separate polygons")
+                    else:
+                        # Single polygon case
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:25832")
                     
                     # Final validation and transformation
                     logger.info("Performing final validation...")
