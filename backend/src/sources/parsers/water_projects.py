@@ -277,10 +277,13 @@ class WaterProjects(Source):
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        geometries = list(dissolved.geoms)
+                        # Clean each geometry with buffer(0)
+                        geometries = [geom.buffer(0) for geom in dissolved.geoms]
                         dissolved_gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:25832")
                     else:
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:25832")
+                        # Clean single geometry with buffer(0)
+                        cleaned = dissolved.buffer(0)
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
                     
                     # Convert to 4326 for storage
                     logger.info("Converting to WGS84 for storage...")
