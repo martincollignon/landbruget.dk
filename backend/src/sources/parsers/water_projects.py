@@ -265,33 +265,29 @@ class WaterProjects(Source):
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
                 try:
-                    # Ensure we're in EPSG:25832 for geometric operations
-                    if combined_gdf.crs is None:
-                        combined_gdf.set_crs("EPSG:25832", inplace=True)
-                    elif combined_gdf.crs.to_epsg() != 25832:
-                        combined_gdf = combined_gdf.to_crs("EPSG:25832")
+                    # Convert to WGS84 before dissolve
+                    if combined_gdf.crs.to_epsg() != 4326:
+                        logger.info("Converting to WGS84...")
+                        combined_gdf = combined_gdf.to_crs("EPSG:4326")
                     
-                    # Single dissolve operation
+                    # Single dissolve operation in WGS84
+                    logger.info("Dissolving in WGS84...")
                     dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Clean each geometry with buffer(0) after dissolve
+                        # Clean each geometry with buffer(0)
                         cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:25832")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:4326")
                     else:
-                        # Clean single geometry with buffer(0) after dissolve
+                        # Clean single geometry with buffer(0)
                         cleaned = dissolved.buffer(0)
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:4326")
                     
-                    # Validate while still in 25832
+                    # Validate final geometries
                     logger.info("Validating final dissolved geometries...")
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
-                    
-                    # Then convert to 4326 for storage
-                    logger.info("Converting to WGS84 for storage...")
-                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
