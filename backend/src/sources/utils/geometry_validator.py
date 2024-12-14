@@ -143,7 +143,7 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
     Validates and transforms geometries while preserving original areas.
     
     Args:
-        gdf: GeoDataFrame with geometries in EPSG:25832
+        gdf: GeoDataFrame with geometries in any CRS
         dataset_name: Name of dataset for logging
     
     Returns:
@@ -151,34 +151,36 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
     """
     try:
         initial_count = len(gdf)
-        
-        # Basic validation
         logger.info(f"{dataset_name}: Starting validation with {initial_count} features")
         logger.info(f"{dataset_name}: Input CRS: {gdf.crs}")
         
-        # Ensure we're in the correct projected CRS for area calculations
-        if gdf.crs is None:
-            logger.warning(f"{dataset_name}: No CRS found, assuming EPSG:25832")
-            gdf.set_crs(epsg=25832, inplace=True)
-        elif gdf.crs.to_epsg() != 25832:
-            logger.info(f"{dataset_name}: Converting from {gdf.crs} to EPSG:25832")
-            gdf = gdf.to_crs(epsg=25832)
-        
-        # Fix invalid geometries and ensure proper orientation
+        # First clean geometries in their original CRS
         invalid_mask = ~gdf.geometry.is_valid
         if invalid_mask.any():
-            logger.warning(f"{dataset_name}: Found {invalid_mask.sum()} invalid geometries. Attempting to fix...")
+            logger.warning(f"{dataset_name}: Found {invalid_mask.sum()} invalid geometries. Attempting to fix in original CRS...")
             gdf.loc[invalid_mask, 'geometry'] = gdf.loc[invalid_mask, 'geometry'].apply(
                 lambda geom: orient(geom.buffer(0), sign=1.0) if isinstance(geom, (Polygon, MultiPolygon)) else geom.buffer(0)
             )
         
-        # Ensure proper orientation for all polygon geometries
-        logger.info(f"{dataset_name}: Ensuring proper orientation for all geometries")
+        # Ensure proper orientation in original CRS
+        logger.info(f"{dataset_name}: Ensuring proper orientation in original CRS")
         gdf['geometry'] = gdf.geometry.apply(
             lambda geom: orient(geom, sign=1.0) if isinstance(geom, (Polygon, MultiPolygon)) else geom
         )
         
-        # Check and fix BigQuery compatibility
+        # Now transform to 4326
+        logger.info(f"{dataset_name}: Converting to EPSG:4326")
+        gdf = gdf.to_crs("EPSG:4326")
+        
+        # Check and fix any issues that might have been introduced by the transformation
+        invalid_after_transform = ~gdf.geometry.is_valid
+        if invalid_after_transform.any():
+            logger.warning(f"{dataset_name}: Found {invalid_after_transform.sum()} invalid geometries after CRS transformation. Fixing...")
+            gdf.loc[invalid_after_transform, 'geometry'] = gdf.loc[invalid_after_transform, 'geometry'].apply(
+                lambda geom: orient(geom.buffer(0), sign=1.0) if isinstance(geom, (Polygon, MultiPolygon)) else geom.buffer(0)
+            )
+        
+        # Final BigQuery compatibility check in 4326
         logger.info(f"{dataset_name}: Checking BigQuery compatibility")
         bq_valid_mask = gdf.geometry.apply(is_valid_for_bigquery)
         if not bq_valid_mask.all():
@@ -201,14 +203,6 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
         gdf = gdf.dropna(subset=['geometry'])
         gdf = gdf[~gdf.geometry.is_empty]
         
-        # Calculate areas in projected CRS (EPSG:25832)
-        gdf['area_m2'] = gdf.geometry.area
-        
-        # Transform to WGS84
-        logger.info(f"{dataset_name}: Converting to EPSG:4326")
-        gdf = gdf.to_crs("EPSG:4326")
-        logger.info(f"{dataset_name}: Output CRS: {gdf.crs}")
-        
         final_count = len(gdf)
         removed_count = initial_count - final_count
         
@@ -216,6 +210,7 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
         logger.info(f"{dataset_name}: Initial features: {initial_count}")
         logger.info(f"{dataset_name}: Valid features: {final_count}")
         logger.info(f"{dataset_name}: Removed features: {removed_count}")
+        logger.info(f"{dataset_name}: Output CRS: {gdf.crs}")
         
         return gdf
         

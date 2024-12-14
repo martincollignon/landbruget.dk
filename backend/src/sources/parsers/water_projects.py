@@ -265,27 +265,26 @@ class WaterProjects(Source):
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
                 try:
-                    # Convert to WGS84 before dissolve
-                    if combined_gdf.crs.to_epsg() != 4326:
-                        logger.info("Converting to WGS84...")
-                        combined_gdf = combined_gdf.to_crs("EPSG:4326")
+                    # Clean geometries before dissolve
+                    logger.info("Cleaning geometries before dissolve...")
+                    combined_gdf.geometry = combined_gdf.geometry.apply(lambda g: g.buffer(0))
                     
-                    # Single dissolve operation in WGS84
-                    logger.info("Dissolving in WGS84...")
+                    # Dissolve cleaned geometries
+                    logger.info("Dissolving cleaned geometries...")
                     dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Clean each geometry with buffer(0)
+                        # Clean each geometry after dissolve
                         cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:4326")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs=combined_gdf.crs)
                     else:
-                        # Clean single geometry with buffer(0)
+                        # Clean single geometry after dissolve
                         cleaned = dissolved.buffer(0)
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:4326")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs=combined_gdf.crs)
                     
-                    # Validate final geometries
+                    # Let the validator handle final cleaning and transformations
                     logger.info("Validating final dissolved geometries...")
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
                     
