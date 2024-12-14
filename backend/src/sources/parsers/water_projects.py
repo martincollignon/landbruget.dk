@@ -237,8 +237,43 @@ class WaterProjects(Source):
             geometries = [wkt.loads(f['geometry']) for f in features]
             gdf = gpd.GeoDataFrame(df, geometry=geometries, crs="EPSG:25832")
             
-            # Validate and transform geometries
-            gdf = validate_and_transform_geometries(gdf, dataset)
+            # Ensure we're in EPSG:25832 for geometric operations
+            if gdf.crs is None:
+                gdf.set_crs("EPSG:25832", inplace=True)
+            elif gdf.crs.to_epsg() != 25832:
+                gdf = gdf.to_crs("EPSG:25832")
+            
+            # Validate geometries before dissolve (but don't transform CRS)
+            logger.info("Validating pre-dissolve geometries...")
+            gdf = validate_and_transform_geometries(gdf, f"{dataset}_pre_dissolve")
+            # Convert back to 25832 for geometric operations
+            gdf = gdf.to_crs("EPSG:25832")
+            
+            logger.info("Performing dissolve operation...")
+            dissolved = unary_union(gdf.geometry.values)
+            logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
+            
+            # Handle MultiPolygon or Polygon (staying in 25832)
+            if dissolved.geom_type == 'MultiPolygon':
+                logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
+                geometries = list(dissolved.geoms)
+                dissolved_gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:25832")
+            else:
+                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:25832")
+            
+            # Convert to 4326 for storage
+            logger.info("Converting to WGS84 for storage...")
+            dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
+            
+            # Final geometry info
+            logger.info("Final dissolved geometry details:")
+            logger.info(f"CRS: {dissolved_gdf.crs}")
+            logger.info(f"Number of features: {len(dissolved_gdf)}")
+            logger.info(f"Bounds: {dissolved_gdf.total_bounds}")
+            
+            # Write dissolved version
+            temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
+            dissolved_gdf.to_parquet(temp_dissolved)
             
             # Handle working/final files
             temp_working = f"/tmp/{dataset}_working.parquet"
