@@ -307,6 +307,24 @@ class WaterProjects(Source):
                     if not valid_geoms.all():
                         invalid_count = (~valid_geoms).sum()
                         logger.error(f"Found {invalid_count} geometries not valid for BigQuery after all processing")
+                        
+                        # Log details about invalid geometries
+                        for idx, (is_valid, geom) in enumerate(zip(valid_geoms, final_gdf.geometry)):
+                            if not is_valid:
+                                logger.error(f"Invalid geometry {idx}:")
+                                logger.error(f"- Valid: {geom.is_valid}")
+                                logger.error(f"- Validity reason: {explain_validity(geom)}")
+                                if isinstance(geom, (Polygon, MultiPolygon)):
+                                    polygons = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
+                                    for i, poly in enumerate(polygons):
+                                        ext_coords = list(poly.exterior.coords)
+                                        logger.error(f"- Part {i} exterior clockwise: {is_clockwise(ext_coords)}")
+                                        logger.error(f"- Part {i} duplicate vertices: {any(ext_coords[j] == ext_coords[j+1] for j in range(len(ext_coords)-1))}")
+                                        for j, interior in enumerate(poly.interiors):
+                                            int_coords = list(interior.coords)
+                                            logger.error(f"- Part {i} interior {j} clockwise: {is_clockwise(int_coords)}")
+                                            logger.error(f"- Part {i} interior {j} duplicate vertices: {any(int_coords[k] == int_coords[k+1] for k in range(len(int_coords)-1))}")
+                        
                         raise ValueError("Failed to create BigQuery-valid geometries")
                     
                     # Write dissolved version
