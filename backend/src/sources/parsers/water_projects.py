@@ -277,11 +277,11 @@ class WaterProjects(Source):
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Clean each geometry with buffer(0)
-                        geometries = [geom.buffer(0) for geom in dissolved.geoms]
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:25832")
+                        # Clean each geometry with buffer(0) after dissolve
+                        cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:25832")
                     else:
-                        # Clean single geometry with buffer(0)
+                        # Clean single geometry with buffer(0) after dissolve
                         cleaned = dissolved.buffer(0)
                         dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
                     
