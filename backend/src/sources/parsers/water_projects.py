@@ -303,31 +303,26 @@ class WaterProjects(Source):
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
                 try:
-                    # Check what we got from dissolve
+                    # Ensure we're in EPSG:25832 for geometric operations
+                    if combined_gdf.crs is None:
+                        combined_gdf.set_crs("EPSG:25832", inplace=True)
+                    elif combined_gdf.crs.to_epsg() != 25832:
+                        combined_gdf = combined_gdf.to_crs("EPSG:25832")
+                    
+                    # Single dissolve operation
                     dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
-                    # If it's a MultiPolygon, split into separate polygons
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Create a row for each polygon
                         geometries = list(dissolved.geoms)
                         dissolved_gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:25832")
-                        logger.info(f"Created GeoDataFrame with {len(dissolved_gdf)} separate polygons")
                     else:
-                        # Single polygon case
                         dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:25832")
                     
-                    # Final validation and transformation
-                    logger.info("Performing final validation...")
-                    dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
-                    
-                    # Add debugging info
-                    logger.info(f"Final dissolved geometry details:")
-                    logger.info(f"CRS: {dissolved_gdf.crs}")
-                    logger.info(f"Geometry type: {dissolved_gdf.geometry.iloc[0].geom_type}")
-                    logger.info(f"Is valid: {dissolved_gdf.geometry.iloc[0].is_valid}")
-                    logger.info(f"Bounds: {dissolved_gdf.geometry.iloc[0].bounds}")
+                    # Convert to 4326 for storage
+                    logger.info("Converting to WGS84 for storage...")
+                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
