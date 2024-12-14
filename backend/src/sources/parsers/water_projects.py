@@ -354,28 +354,6 @@ class WaterProjects(Source):
             logger.error(f"Error in _fetch_arcgis_features: {str(e)}")
             return None
 
-    @backoff.on_exception(
-        backoff.expo,
-        (ClientError, asyncio.TimeoutError, aiohttp.ClientOSError),
-        max_tries=5,
-        max_time=300
-    )
-    async def _fetch_initial_layer(self, session, layer, base_url):
-        """Fetch initial layer data with retries"""
-        params = self._get_params(layer, 0)
-        async with session.get(
-            base_url, 
-            params=params,
-            timeout=self.request_timeout_config,
-            ssl=False
-        ) as response:
-            if response.status != 200:
-                logger.error(f"Failed to fetch {layer}. Status: {response.status}")
-                error_text = await response.text()
-                logger.error(f"Error response: {error_text[:500]}")
-                return None
-            return await response.text()
-
     async def sync(self):
         """Sync all water project layers"""
         logger.info("Starting water projects sync...")
@@ -399,18 +377,55 @@ class WaterProjects(Source):
                                 logger.info(f"Layer {layer}: processed {len(features):,} features")
                             continue
 
-                        # Fetch initial layer data with retries
-                        initial_response = await self._fetch_initial_layer(session, layer, base_url)
-                        if not initial_response:
-                            logger.warning(f"Skipping layer {layer} due to fetch failure")
-                            continue
+                        # Existing WFS handling code
+                        params = self._get_params(layer, 0)
+                        async with session.get(base_url, params=params) as response:
+                            if response.status != 200:
+                                logger.error(f"Failed to fetch {layer}. Status: {response.status}")
+                                error_text = await response.text()
+                                logger.error(f"Error response: {error_text[:500]}")
+                                continue
                             
-                        root = ET.fromstring(initial_response)
-                        total_features = int(root.get('numberMatched', '0'))
-                        logger.info(f"Layer {layer}: found {total_features:,} total features")
-                        
-                        # Rest of the processing remains
-
+                            text = await response.text()
+                            root = ET.fromstring(text)
+                            total_features = int(root.get('numberMatched', '0'))
+                            logger.info(f"Layer {layer}: found {total_features:,} total features")
+                            
+                            # Process first batch
+                            features = []
+                            namespaces = {}
+                            for elem in root.iter():
+                                if '}' in elem.tag:
+                                    ns_url = elem.tag.split('}')[0].strip('{')
+                                    namespaces['ns'] = ns_url
+                                    break
+                                    
+                            for member in root.findall('.//ns:member', namespaces=namespaces):
+                                for feature in member:
+                                    parsed = self._parse_feature(feature, layer)
+                                    if parsed and parsed.get('geometry'):
+                                        features.append(parsed)
+                            
+                            if features:
+                                features_batch.extend(features)
+                                total_processed += len(features)
+                                logger.info(f"Layer {layer}: processed {len(features):,} features")
+                            
+                            # Process remaining batches
+                            for start_index in range(self.batch_size, total_features, self.batch_size):
+                                logger.info(f"Layer {layer}: fetching features {start_index:,}-{min(start_index + self.batch_size, total_features):,} of {total_features:,}")
+                                chunk = await self._fetch_chunk(session, layer, start_index)
+                                if chunk:
+                                    features_batch.extend(chunk)
+                                    total_processed += len(chunk)
+                                    logger.info(f"Layer {layer}: processed {len(chunk):,} features")
+                            
+                            # Write batch if it's large enough
+                            if len(features_batch) >= self.storage_batch_size:
+                                logger.info(f"Writing batch of {len(features_batch):,} features")
+                                await self.write_to_storage(features_batch, 'water_projects')
+                                features_batch = []
+                            
                     except Exception as e:
                         logger.error(f"Error processing layer {layer}: {str(e)}", exc_info=True)
                         continue
