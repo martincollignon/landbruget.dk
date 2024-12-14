@@ -20,6 +20,7 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
         
         # Basic validation
         logger.info(f"{dataset_name}: Starting validation with {initial_count} features")
+        logger.info(f"{dataset_name}: Input CRS: {gdf.crs}")
         
         # Ensure we're in the correct projected CRS for area calculations
         if gdf.crs is None:
@@ -45,15 +46,9 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
         gdf['area_m2'] = gdf.geometry.area
         
         # Transform to WGS84
+        logger.info(f"{dataset_name}: Converting to EPSG:4326")
         gdf = gdf.to_crs("EPSG:4326")
-        
-        # Final validation check after transformation
-        invalid_after_transform = ~gdf.geometry.is_valid
-        if invalid_after_transform.any():
-            logger.warning(f"{dataset_name}: Found {invalid_after_transform.sum()} invalid geometries after transformation. Fixing...")
-            gdf.loc[invalid_after_transform, 'geometry'] = gdf.loc[invalid_after_transform, 'geometry'].apply(
-                lambda geom: geom.buffer(0) if geom else None
-            )
+        logger.info(f"{dataset_name}: Output CRS: {gdf.crs}")
         
         final_count = len(gdf)
         removed_count = initial_count - final_count
