@@ -1,4 +1,5 @@
 from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry.polygon import orient
 import geopandas as gpd
 import logging
 
@@ -30,13 +31,19 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) 
             logger.info(f"{dataset_name}: Converting from {gdf.crs} to EPSG:25832")
             gdf = gdf.to_crs(epsg=25832)
         
-        # Fix invalid geometries
+        # Fix invalid geometries and ensure proper orientation
         invalid_mask = ~gdf.geometry.is_valid
         if invalid_mask.any():
             logger.warning(f"{dataset_name}: Found {invalid_mask.sum()} invalid geometries. Attempting to fix...")
             gdf.loc[invalid_mask, 'geometry'] = gdf.loc[invalid_mask, 'geometry'].apply(
-                lambda geom: geom.buffer(0) if geom else None
+                lambda geom: orient(geom.buffer(0), sign=1.0) if isinstance(geom, (Polygon, MultiPolygon)) else geom.buffer(0)
             )
+        
+        # Ensure proper orientation for all polygon geometries
+        logger.info(f"{dataset_name}: Ensuring proper orientation for all geometries")
+        gdf['geometry'] = gdf.geometry.apply(
+            lambda geom: orient(geom, sign=1.0) if isinstance(geom, (Polygon, MultiPolygon)) else geom
+        )
         
         # Remove nulls and empty geometries
         gdf = gdf.dropna(subset=['geometry'])
