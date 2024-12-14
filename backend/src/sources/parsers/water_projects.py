@@ -267,59 +267,51 @@ class WaterProjects(Source):
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
                 try:
-                    # Log initial state
                     logger.info(f"Initial CRS: {combined_gdf.crs}")
                     
-                    # Check BigQuery compatibility before dissolve
-                    bq_valid = combined_gdf.geometry.apply(is_valid_for_bigquery)
-                    logger.info(f"Initial BigQuery-invalid geometries: {(~bq_valid).sum()}")
+                    # Clean geometries in UTM
+                    logger.info("Cleaning geometries in UTM...")
+                    combined_gdf.geometry = combined_gdf.geometry.apply(lambda g: g.buffer(0))
                     
-                    # Dissolve
+                    # Dissolve in UTM
+                    logger.info("Dissolving cleaned geometries...")
                     dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
+                    # Create GeoDataFrame and clean result in UTM
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Check each part for BigQuery validity
-                        dissolved_geoms = []
-                        for idx, geom in enumerate(dissolved.geoms):
-                            if not is_valid_for_bigquery(geom):
-                                logger.error(f"BigQuery-invalid dissolved part {idx}: {explain_validity(geom)}")
-                                # Log ring orientations
-                                if isinstance(geom, Polygon):
-                                    ext_ring = list(geom.exterior.coords)
-                                    logger.error(f"Part {idx} exterior ring orientation: {is_clockwise(ext_ring)}")
-                                    for i, interior in enumerate(geom.interiors):
-                                        int_ring = list(interior.coords)
-                                        logger.error(f"Part {idx} interior ring {i} orientation: {is_clockwise(int_ring)}")
-                            dissolved_geoms.append(geom)
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=dissolved_geoms, crs=combined_gdf.crs)
+                        cleaned_geoms = [g.buffer(0) for g in dissolved.geoms]
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:25832")
                     else:
-                        if not is_valid_for_bigquery(dissolved):
-                            logger.error(f"BigQuery-invalid dissolved geometry: {explain_validity(dissolved)}")
-                            if isinstance(dissolved, Polygon):
-                                ext_ring = list(dissolved.exterior.coords)
-                                logger.error(f"Exterior ring orientation: {is_clockwise(ext_ring)}")
-                                for i, interior in enumerate(dissolved.interiors):
-                                    int_ring = list(interior.coords)
-                                    logger.error(f"Interior ring {i} orientation: {is_clockwise(int_ring)}")
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
+                        cleaned = dissolved.buffer(0)
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
                     
-                    # Log before validation
-                    bq_valid = dissolved_gdf.geometry.apply(is_valid_for_bigquery)
-                    logger.info(f"BigQuery-invalid geometries before validation: {(~bq_valid).sum()}")
+                    # Convert to WGS84
+                    logger.info("Converting to WGS84...")
+                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
                     
-                    # Validate
-                    logger.info("Validating final dissolved geometries...")
-                    dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
+                    # Handle any overlaps created by the transformation
+                    logger.info("Fixing any overlaps from transformation...")
+                    all_geoms = dissolved_gdf.geometry.values
+                    fixed = unary_union(all_geoms).buffer(0)
                     
-                    # Log final state
-                    bq_valid = dissolved_gdf.geometry.apply(is_valid_for_bigquery)
-                    logger.info(f"Final BigQuery-invalid geometries: {(~bq_valid).sum()}")
+                    if isinstance(fixed, MultiPolygon):
+                        final_gdf = gpd.GeoDataFrame(geometry=list(fixed.geoms), crs="EPSG:4326")
+                    else:
+                        final_gdf = gpd.GeoDataFrame(geometry=[fixed], crs="EPSG:4326")
+                    
+                    # Final BigQuery validity check
+                    logger.info("Checking BigQuery validity...")
+                    valid_geoms = final_gdf.geometry.apply(is_valid_for_bigquery)
+                    if not valid_geoms.all():
+                        invalid_count = (~valid_geoms).sum()
+                        logger.error(f"Found {invalid_count} geometries not valid for BigQuery after all processing")
+                        raise ValueError("Failed to create BigQuery-valid geometries")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
-                    dissolved_gdf.to_parquet(temp_dissolved)
+                    final_gdf.to_parquet(temp_dissolved)
                     dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
                     dissolved_blob.upload_from_filename(temp_dissolved)
                     logger.info("Dissolved version created and saved")
