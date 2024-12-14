@@ -265,28 +265,43 @@ class WaterProjects(Source):
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
                 try:
-                    # Clean geometries before dissolve
-                    logger.info("Cleaning geometries before dissolve...")
-                    combined_gdf.geometry = combined_gdf.geometry.apply(lambda g: g.buffer(0))
+                    # Log initial state
+                    logger.info(f"Initial CRS: {combined_gdf.crs}")
+                    invalid_count = (~combined_gdf.geometry.is_valid).sum()
+                    logger.info(f"Initial invalid geometries: {invalid_count}")
                     
-                    # Dissolve cleaned geometries
-                    logger.info("Dissolving cleaned geometries...")
+                    # Log before dissolve
+                    for idx, geom in enumerate(combined_gdf.geometry):
+                        if not geom.is_valid:
+                            logger.error(f"Invalid geometry {idx} before dissolve: {explain_validity(geom)}")
+                    
+                    # Dissolve
                     dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Clean each geometry after dissolve
-                        cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs=combined_gdf.crs)
+                        # Check each part
+                        for idx, geom in enumerate(dissolved.geoms):
+                            if not geom.is_valid:
+                                logger.error(f"Invalid dissolved part {idx}: {explain_validity(geom)}")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=dissolved.geoms, crs=combined_gdf.crs)
                     else:
-                        # Clean single geometry after dissolve
-                        cleaned = dissolved.buffer(0)
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs=combined_gdf.crs)
+                        if not dissolved.is_valid:
+                            logger.error(f"Invalid dissolved geometry: {explain_validity(dissolved)}")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
                     
-                    # Let the validator handle final cleaning and transformations
+                    # Log before validation
+                    invalid_count = (~dissolved_gdf.geometry.is_valid).sum()
+                    logger.info(f"Invalid geometries before validation: {invalid_count}")
+                    
+                    # Validate
                     logger.info("Validating final dissolved geometries...")
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
+                    
+                    # Log final state
+                    invalid_count = (~dissolved_gdf.geometry.is_valid).sum()
+                    logger.info(f"Final invalid geometries: {invalid_count}")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
