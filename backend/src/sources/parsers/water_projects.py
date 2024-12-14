@@ -16,6 +16,7 @@ import backoff
 from aiohttp import ClientError, ClientTimeout
 from dotenv import load_dotenv
 from tqdm import tqdm
+import ssl
 
 from ...base import Source
 from ..utils.geometry_validator import validate_and_transform_geometries
@@ -291,6 +292,9 @@ class WaterProjects(Source):
     async def _fetch_arcgis_features(self, session, layer, url):
         """Fetch features from ArcGIS REST service"""
         try:
+            # Extract layer ID from the full layer string
+            layer_id = layer.split(':')[1]  # This will get "0" from "Klima_lavbund_demarkation___offentlige_projekter:0"
+            
             params = {
                 'f': 'json',
                 'where': '1=1',
@@ -300,9 +304,16 @@ class WaterProjects(Source):
                 'returnGeometry': 'true'
             }
 
-            async with session.get(f"{url}/{layer.split(':')[1]}/query", params=params) as response:
+            # Create SSL context
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            async with session.get(f"{url}/{layer_id}/query", params=params, ssl=ssl_context) as response:
                 if response.status != 200:
                     logger.error(f"Error fetching ArcGIS features. Status: {response.status}")
+                    error_text = await response.text()
+                    logger.error(f"Error response: {error_text[:500]}")
                     return None
 
                 data = await response.json()
