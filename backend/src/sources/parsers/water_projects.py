@@ -267,15 +267,24 @@ class WaterProjects(Source):
                 
                 # Create dissolved version
                 logger.info("Creating dissolved version...")
-                dissolved = unary_union(combined_gdf.geometry.values)
-                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
-                
-                # Write dissolved version
-                temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
-                dissolved_gdf.to_parquet(temp_dissolved)
-                dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
-                dissolved_blob.upload_from_filename(temp_dissolved)
-                logger.info("Dissolved version created and saved")
+                try:
+                    # Dissolve using already validated geometries
+                    dissolved = unary_union(combined_gdf.geometry.values)
+                    dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
+                    
+                    # Validate the dissolved geometry
+                    dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
+                    
+                    # Write dissolved version
+                    temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
+                    dissolved_gdf.to_parquet(temp_dissolved)
+                    dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
+                    dissolved_blob.upload_from_filename(temp_dissolved)
+                    logger.info("Dissolved version created and saved")
+                    
+                except Exception as e:
+                    logger.error(f"Error during dissolve operation: {str(e)}")
+                    raise
                 
                 # Cleanup
                 working_blob.delete()
