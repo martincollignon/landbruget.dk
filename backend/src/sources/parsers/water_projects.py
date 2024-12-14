@@ -272,8 +272,16 @@ class WaterProjects(Source):
                     dissolved = unary_union(combined_gdf.geometry.values)
                     dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
                     
-                    # Validate the dissolved geometry
+                    # Final validation and transformation
+                    logger.info("Performing final validation...")
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
+                    
+                    # Add debugging info
+                    logger.info(f"Final dissolved geometry details:")
+                    logger.info(f"CRS: {dissolved_gdf.crs}")
+                    logger.info(f"Geometry type: {dissolved_gdf.geometry.iloc[0].geom_type}")
+                    logger.info(f"Is valid: {dissolved_gdf.geometry.iloc[0].is_valid}")
+                    logger.info(f"Bounds: {dissolved_gdf.geometry.iloc[0].bounds}")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
