@@ -265,17 +265,40 @@ class WaterProjects(Source):
                 final_blob = self.bucket.blob(f'raw/{dataset}/current.parquet')
                 final_blob.upload_from_filename(temp_working)
                 
-                # Create dissolved version
+                # Create dissolved version with extra validation
                 logger.info("Creating dissolved version...")
-                dissolved = unary_union(combined_gdf.geometry.values)
-                dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs=combined_gdf.crs)
-                
-                # Write dissolved version
-                temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
-                dissolved_gdf.to_parquet(temp_dissolved)
-                dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
-                dissolved_blob.upload_from_filename(temp_dissolved)
-                logger.info("Dissolved version created and saved")
+                try:
+                    # Convert to projected CRS for dissolve operation
+                    combined_gdf = combined_gdf.to_crs("EPSG:25832")
+                    
+                    # Clean geometries before dissolve
+                    combined_gdf['geometry'] = combined_gdf.geometry.buffer(0)
+                    
+                    # Dissolve with a small buffer to handle precision issues
+                    dissolved = unary_union(combined_gdf.geometry.values)
+                    dissolved = dissolved.buffer(0.01).buffer(-0.01)  # Small buffer to clean up edges
+                    
+                    # Create new GeoDataFrame with dissolved geometry
+                    dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:25832")
+                    
+                    # Validate the dissolved geometry
+                    dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
+                    
+                    # Final check before saving
+                    if not dissolved_gdf.geometry.iloc[0].is_valid:
+                        logger.warning("Dissolved geometry still invalid after validation. Applying final cleanup.")
+                        dissolved_gdf.geometry = dissolved_gdf.geometry.buffer(0)
+                    
+                    # Write dissolved version
+                    temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
+                    dissolved_gdf.to_parquet(temp_dissolved)
+                    dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
+                    dissolved_blob.upload_from_filename(temp_dissolved)
+                    logger.info("Dissolved version created and saved")
+                    
+                except Exception as e:
+                    logger.error(f"Error during dissolve operation: {str(e)}")
+                    raise
                 
                 # Cleanup
                 working_blob.delete()
