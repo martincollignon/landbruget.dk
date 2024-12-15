@@ -281,19 +281,35 @@ class WaterProjects(Source):
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Clean in UTM
-                        cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
+                        # Clean each part in UTM
+                        cleaned_geoms = []
+                        for geom in dissolved.geoms:
+                            # Orient polygon correctly in UTM
+                            oriented = orient(geom, sign=1.0)
+                            # Clean with small buffer
+                            cleaned = oriented.buffer(0.01).buffer(-0.01)
+                            # Final buffer(0) for validity
+                            cleaned = cleaned.buffer(0)
+                            cleaned_geoms.append(cleaned)
                         dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:25832")
                     else:
-                        # Clean in UTM
-                        cleaned = dissolved.buffer(0)
+                        # Clean single geometry in UTM
+                        oriented = orient(dissolved, sign=1.0)
+                        cleaned = oriented.buffer(0.01).buffer(-0.01)
+                        cleaned = cleaned.buffer(0)
                         dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
                     
-                    # Final conversion to WGS84
+                    # Validate in UTM first
+                    invalid_utm = ~dissolved_gdf.geometry.is_valid | ~dissolved_gdf.geometry.is_simple
+                    if invalid_utm.any():
+                        logger.error(f"Found {invalid_utm.sum()} invalid geometries in UTM")
+                        raise ValueError("Invalid geometries in UTM")
+                    
+                    # Convert to WGS84
                     logger.info("Converting dissolved result to WGS84...")
                     dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
                     
-                    # Validate without additional transformations
+                    # Final validation in WGS84
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
                     
                     # Write dissolved version
