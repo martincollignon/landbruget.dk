@@ -418,6 +418,17 @@ class WaterProjects(Source):
         total_processed = 0
         features_batch = []
         
+        # Clean up any existing files at start
+        for blob_path in [
+            'raw/water_projects/working.parquet',
+            'raw/water_projects/current.parquet',
+            'raw/water_projects/dissolved_current.parquet'
+        ]:
+            blob = self.bucket.blob(blob_path)
+            if blob.exists():
+                blob.delete()
+                logger.info(f"Deleted existing file: {blob_path}")
+        
         try:
             async with aiohttp.ClientSession(headers=self.headers) as session:
                 for layer in self.layers:
