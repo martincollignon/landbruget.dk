@@ -21,7 +21,7 @@ from shapely.validation import explain_validity
 from shapely.geometry.polygon import orient
 
 from ...base import Source
-from ..utils.geometry_validator import validate_and_transform_geometries
+from ..utils.geometry_validator import validate_and_transform_geometries, prepare_geometries
 
 logger = logging.getLogger(__name__)
 
@@ -269,67 +269,26 @@ class WaterProjects(Source):
                 try:
                     logger.info(f"Initial CRS: {combined_gdf.crs}")
                     
-                    # Clean geometries in UTM
-                    logger.info("Cleaning geometries in UTM...")
-                    combined_gdf.geometry = combined_gdf.geometry.apply(lambda g: g.buffer(0))
+                    # Clean and prepare geometries before dissolve
+                    logger.info("Preparing geometries...")
+                    cleaned_gdf = prepare_geometries(combined_gdf)
                     
-                    # Dissolve in UTM
-                    logger.info("Dissolving cleaned geometries...")
-                    dissolved = unary_union(combined_gdf.geometry.values)
+                    # Single dissolve operation on cleaned geometries
+                    dissolved = unary_union(cleaned_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
-                    # Create GeoDataFrame and clean result in UTM
+                    # Clean up after dissolve
+                    dissolved = dissolved.buffer(0)
+                    
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        cleaned_geoms = [g.buffer(0) for g in dissolved.geoms]
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:25832")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=list(dissolved.geoms), crs="EPSG:4326")
                     else:
-                        cleaned = dissolved.buffer(0)
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
-                    
-                    # Convert to WGS84
-                    logger.info("Converting to WGS84...")
-                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
-                    
-                    # Handle any overlaps created by the transformation
-                    logger.info("Fixing any overlaps from transformation...")
-                    all_geoms = dissolved_gdf.geometry.values
-                    fixed = unary_union(all_geoms).buffer(0)
-                    
-                    if isinstance(fixed, MultiPolygon):
-                        final_gdf = gpd.GeoDataFrame(geometry=list(fixed.geoms), crs="EPSG:4326")
-                    else:
-                        final_gdf = gpd.GeoDataFrame(geometry=[fixed], crs="EPSG:4326")
-                    
-                    # Final BigQuery validity check
-                    logger.info("Checking BigQuery validity...")
-                    valid_geoms = final_gdf.geometry.apply(is_valid_for_bigquery)
-                    if not valid_geoms.all():
-                        invalid_count = (~valid_geoms).sum()
-                        logger.error(f"Found {invalid_count} geometries not valid for BigQuery after all processing")
-                        
-                        # Log details about invalid geometries
-                        for idx, (is_valid, geom) in enumerate(zip(valid_geoms, final_gdf.geometry)):
-                            if not is_valid:
-                                logger.error(f"Invalid geometry {idx}:")
-                                logger.error(f"- Valid: {geom.is_valid}")
-                                logger.error(f"- Validity reason: {explain_validity(geom)}")
-                                if isinstance(geom, (Polygon, MultiPolygon)):
-                                    polygons = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
-                                    for i, poly in enumerate(polygons):
-                                        ext_coords = list(poly.exterior.coords)
-                                        logger.error(f"- Part {i} exterior clockwise: {is_clockwise(ext_coords)}")
-                                        logger.error(f"- Part {i} duplicate vertices: {any(ext_coords[j] == ext_coords[j+1] for j in range(len(ext_coords)-1))}")
-                                        for j, interior in enumerate(poly.interiors):
-                                            int_coords = list(interior.coords)
-                                            logger.error(f"- Part {i} interior {j} clockwise: {is_clockwise(int_coords)}")
-                                            logger.error(f"- Part {i} interior {j} duplicate vertices: {any(int_coords[k] == int_coords[k+1] for k in range(len(int_coords)-1))}")
-                        
-                        raise ValueError("Failed to create BigQuery-valid geometries")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:4326")
                     
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
-                    final_gdf.to_parquet(temp_dissolved)
+                    dissolved_gdf.to_parquet(temp_dissolved)
                     dissolved_blob = self.bucket.blob(f'raw/{dataset}/dissolved_current.parquet')
                     dissolved_blob.upload_from_filename(temp_dissolved)
                     logger.info("Dissolved version created and saved")
