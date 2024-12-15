@@ -269,54 +269,31 @@ class WaterProjects(Source):
                 try:
                     logger.info(f"Initial CRS: {combined_gdf.crs}")
                     
-                    # Convert to WGS84 before dissolve
-                    if combined_gdf.crs.to_epsg() != 4326:
-                        logger.info("Converting to WGS84...")
-                        combined_gdf = combined_gdf.to_crs("EPSG:4326")
+                    # Ensure we're in UTM
+                    if combined_gdf.crs.to_epsg() != 25832:
+                        logger.info("Converting to UTM...")
+                        combined_gdf = combined_gdf.to_crs("EPSG:25832")
                     
-                    # Single dissolve operation in WGS84
-                    logger.info("Dissolving in WGS84...")
+                    # Dissolve in UTM
+                    logger.info("Dissolving in UTM...")
                     dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        # Clean each geometry with buffer(0)
+                        # Clean in UTM
                         cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:4326")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:25832")
                     else:
-                        # Clean single geometry with buffer(0)
+                        # Clean in UTM
                         cleaned = dissolved.buffer(0)
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:4326")
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:25832")
                     
-                    # Detailed geometry inspection after dissolve
-                    if dissolved.geom_type == 'MultiPolygon':
-                        logger.info(f"Post-dissolve parts: {len(dissolved.geoms)}")
-                        logger.info(f"Post-dissolve validity: {dissolved.is_valid}")
-                        logger.info(f"Post-dissolve simplicity: {dissolved.is_simple}")
-                        
-                        # Inspect each part in detail
-                        for i, part in enumerate(dissolved.geoms):
-                            if not part.is_valid or not part.is_simple:
-                                logger.error(f"Invalid part {i}:")
-                                logger.error(f"- Validity explanation: {explain_validity(part)}")
-                                logger.error(f"- Number of exterior points: {len(list(part.exterior.coords))}")
-                                logger.error(f"- Number of interior rings: {len(part.interiors)}")
-                                # Log coordinates of problematic part
-                                logger.error(f"- Exterior coordinates: {list(part.exterior.coords)}")
-                                for j, interior in enumerate(part.interiors):
-                                    logger.error(f"- Interior ring {j} coordinates: {list(interior.coords)}")
-                    else:
-                        if not dissolved.is_valid or not dissolved.is_simple:
-                            logger.error("Invalid single polygon:")
-                            logger.error(f"- Validity explanation: {explain_validity(dissolved)}")
-                            logger.error(f"- Number of exterior points: {len(list(dissolved.exterior.coords))}")
-                            logger.error(f"- Number of interior rings: {len(dissolved.interiors)}")
-                            logger.error(f"- Exterior coordinates: {list(dissolved.exterior.coords)}")
-                            for j, interior in enumerate(dissolved.interiors):
-                                logger.error(f"- Interior ring {j} coordinates: {list(interior.coords)}")
-
-                    # Final validation will handle BigQuery compatibility
+                    # Final conversion to WGS84
+                    logger.info("Converting dissolved result to WGS84...")
+                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
+                    
+                    # Validate without additional transformations
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
                     
                     # Write dissolved version
