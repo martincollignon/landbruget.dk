@@ -286,6 +286,14 @@ class WaterProjects(Source):
                     else:
                         dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:4326")
                     
+                    # Convert to 4326 for storage
+                    logger.info("Converting to WGS84 for storage...")
+                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
+                    
+                    # Validate final geometries before saving
+                    logger.info("Validating final dissolved geometries...")
+                    dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
+                    
                     # Write dissolved version
                     temp_dissolved = f"/tmp/{dataset}_dissolved.parquet"
                     dissolved_gdf.to_parquet(temp_dissolved)
