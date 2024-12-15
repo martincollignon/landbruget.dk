@@ -49,5 +49,14 @@ SOURCES = {
         "frequency": "static",
         "enabled": True,
         "bucket": "landbrugsdata-raw-data"
+    },
+    "property_owners": {
+        "name": "Danish Property Owners",
+        "frequency": "weekly",
+        "enabled": True,
+        "type": "sftp",
+        "bucket": "landbrugsdata-raw-data",
+        "raw_folder": "raw",
+        "processed_folder": "processed"
     }
 }
