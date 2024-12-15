@@ -158,6 +158,16 @@ class AgriculturalFields(Source):
         self.features_processed = 0
         self.is_sync_complete = False
         
+        # Add cleanup
+        for blob_path in [
+            'raw/agricultural_fields/working.parquet',
+            'raw/agricultural_fields/current.parquet'
+        ]:
+            blob = self.bucket.blob(blob_path)
+            if blob.exists():
+                blob.delete()
+                logger.info(f"Deleted existing file: {blob_path}")
+        
         try:
             conn = aiohttp.TCPConnector(limit=self.max_concurrent, ssl=self.ssl_context)
             async with aiohttp.ClientSession(timeout=self.timeout_config, connector=conn) as session:

@@ -377,6 +377,16 @@ class Cadastral(Source):
         logger.info("Starting cadastral sync...")
         self.is_sync_complete = False
         
+        # Add cleanup
+        for blob_path in [
+            'raw/cadastral/working.parquet',
+            'raw/cadastral/current.parquet'
+        ]:
+            blob = self.bucket.blob(blob_path)
+            if blob.exists():
+                blob.delete()
+                logger.info(f"Deleted existing file: {blob_path}")
+        
         try:
             async with aiohttp.ClientSession(timeout=self.total_timeout_config) as session:
                 total_features = await self._get_total_count(session)
