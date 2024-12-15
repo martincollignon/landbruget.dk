@@ -21,7 +21,7 @@ from shapely.validation import explain_validity
 from shapely.geometry.polygon import orient
 
 from ...base import Source
-from ..utils.geometry_validator import validate_and_transform_geometries, prepare_geometries
+from ..utils.geometry_validator import validate_and_transform_geometries
 
 logger = logging.getLogger(__name__)
 
