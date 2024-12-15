@@ -271,7 +271,7 @@ class WaterProjects(Source):
                     
                     # Clean and prepare geometries before dissolve
                     logger.info("Preparing geometries...")
-                    cleaned_gdf = prepare_geometries(combined_gdf)
+                    cleaned_gdf = validate_and_transform_geometries(combined_gdf, "water_projects")
                     
                     # Single dissolve operation on cleaned geometries
                     dissolved = unary_union(cleaned_gdf.geometry.values)

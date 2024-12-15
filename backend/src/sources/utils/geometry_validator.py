@@ -50,66 +50,101 @@ def is_valid_for_bigquery(geom) -> bool:
         logger.error(f"Error checking BigQuery validity: {str(e)}")
         return False
 
-def prepare_geometries(gdf, tolerance=0.1):  # tolerance in meters
+def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str, tolerance: float = 0.1) -> gpd.GeoDataFrame:
     """
-    Prepare geometries in UTM before conversion to WGS84
+    Validates and transforms geometries for BigQuery compatibility.
+    
+    This function performs a series of cleanup operations to ensure geometries are valid
+    and meet BigQuery's requirements. All operations are performed in UTM zone 32N (EPSG:25832)
+    where possible to maintain geometric precision for Danish data.
+    
+    The process:
+    1. Converts to UTM (EPSG:25832)
+    2. Cleans geometries with buffer(0) in UTM
+    3. Simplifies if tolerance is provided
+    4. Converts to WGS84 (EPSG:4326) for BigQuery
+    5. Final cleanup in WGS84
     
     Args:
         gdf: GeoDataFrame with geometries in any CRS
-        tolerance: Simplification tolerance in meters
-        
+        dataset_name: Name of dataset for logging
+        tolerance: Simplification tolerance in meters (default: 0.1)
+                  Set to None to skip simplification
+    
     Returns:
         GeoDataFrame with valid geometries in EPSG:4326
+        
+    Raises:
+        ValueError: If geometries cannot be made valid
     """
-    logger.info(f"Starting with {len(gdf)} geometries in CRS: {gdf.crs}")
-    
-    # Ensure we're in UTM
-    if gdf.crs != "EPSG:25832":
-        gdf = gdf.to_crs("EPSG:25832")
-        logger.info("Converted to UTM (EPSG:25832)")
-    
-    # Initial cleanup in UTM
-    gdf.geometry = gdf.geometry.apply(lambda g: g.buffer(0))
-    
-    # Validate initial state
-    invalid_before = ~gdf.geometry.is_valid
-    if invalid_before.any():
-        logger.warning(f"Found {invalid_before.sum()} invalid geometries before cleanup")
-    
-    # Clean and simplify in UTM
-    original_areas = gdf.geometry.area
-    gdf.geometry = gdf.geometry.apply(lambda g: g.buffer(0).simplify(tolerance))
-    new_areas = gdf.geometry.area
-    
-    # Check area changes
-    area_changes = ((new_areas - original_areas) / original_areas * 100)
-    max_change = area_changes.abs().max()
-    logger.info(f"Maximum area change during cleanup: {max_change:.6f}%")
-    
-    if max_change > 1.0:  # More than 1% change
-        logger.warning("Large area changes detected during cleanup")
+    try:
+        initial_count = len(gdf)
+        logger.info(f"{dataset_name}: Starting validation with {initial_count} features")
+        logger.info(f"{dataset_name}: Input CRS: {gdf.crs}")
         
-    # Validate in UTM
-    invalid_after = ~gdf.geometry.is_valid
-    if invalid_after.any():
-        raise ValueError(f"Found {invalid_after.sum()} invalid geometries after UTM cleanup")
-    
-    # Convert to WGS84
-    logger.info("Converting to WGS84...")
-    wgs84_gdf = gdf.to_crs("EPSG:4326")
-    
-    # Final cleanup in WGS84
-    wgs84_gdf.geometry = wgs84_gdf.geometry.apply(lambda g: g.buffer(0))
-    
-    # Final validation
-    invalid_wgs84 = ~wgs84_gdf.geometry.is_valid
-    if invalid_wgs84.any():
-        raise ValueError(f"Found {invalid_wgs84.sum()} invalid geometries after WGS84 conversion")
-    
-    # Check for self-intersections
-    self_intersecting = ~wgs84_gdf.geometry.is_simple
-    if self_intersecting.any():
-        logger.warning(f"Found {self_intersecting.sum()} self-intersecting geometries in WGS84")
+        # Convert to UTM
+        if gdf.crs != "EPSG:25832":
+            logger.info(f"{dataset_name}: Converting to UTM (EPSG:25832) for better precision")
+            gdf = gdf.to_crs("EPSG:25832")
         
-    logger.info("Geometry preparation complete")
-    return wgs84_gdf
+        # Initial cleanup in UTM
+        logger.info(f"{dataset_name}: Performing initial cleanup")
+        original_areas = gdf.geometry.area
+        gdf.geometry = gdf.geometry.apply(lambda g: g.buffer(0))
+        
+        # Simplify if tolerance is provided
+        if tolerance is not None:
+            logger.info(f"{dataset_name}: Simplifying geometries with tolerance {tolerance}")
+            gdf.geometry = gdf.geometry.apply(lambda g: g.simplify(tolerance))
+            
+            # Check area changes
+            new_areas = gdf.geometry.area
+            area_changes = ((new_areas - original_areas) / original_areas * 100)
+            max_change = area_changes.abs().max()
+            logger.info(f"{dataset_name}: Maximum area change during cleanup: {max_change:.6f}%")
+            
+            if max_change > 1.0:  # More than 1% change
+                logger.warning(f"{dataset_name}: Large area changes detected during cleanup")
+        
+        # Validate in UTM
+        invalid_mask = ~gdf.geometry.is_valid
+        if invalid_mask.any():
+            logger.warning(f"{dataset_name}: Found {invalid_mask.sum()} invalid geometries after cleanup")
+            raise ValueError(f"Found {invalid_mask.sum()} invalid geometries after cleanup")
+        
+        # Convert to WGS84
+        logger.info(f"{dataset_name}: Converting to WGS84 (EPSG:4326)")
+        gdf = gdf.to_crs("EPSG:4326")
+        
+        # Final cleanup in WGS84
+        gdf.geometry = gdf.geometry.apply(lambda g: g.buffer(0))
+        
+        # Final validation
+        invalid_wgs84 = ~gdf.geometry.is_valid
+        if invalid_wgs84.any():
+            raise ValueError(f"Found {invalid_wgs84.sum()} invalid geometries after WGS84 conversion")
+        
+        # Check for self-intersections
+        self_intersecting = ~gdf.geometry.is_simple
+        if self_intersecting.any():
+            logger.warning(f"{dataset_name}: Found {self_intersecting.sum()} self-intersecting geometries in WGS84")
+            raise ValueError(f"Found {self_intersecting.sum()} self-intersecting geometries")
+        
+        # Remove nulls and empty geometries
+        gdf = gdf.dropna(subset=['geometry'])
+        gdf = gdf[~gdf.geometry.is_empty]
+        
+        final_count = len(gdf)
+        removed_count = initial_count - final_count
+        
+        logger.info(f"{dataset_name}: Validation complete")
+        logger.info(f"{dataset_name}: Initial features: {initial_count}")
+        logger.info(f"{dataset_name}: Valid features: {final_count}")
+        logger.info(f"{dataset_name}: Removed features: {removed_count}")
+        logger.info(f"{dataset_name}: Output CRS: {gdf.crs}")
+        
+        return gdf
+        
+    except Exception as e:
+        logger.error(f"{dataset_name}: Error in geometry validation: {str(e)}")
+        raise
