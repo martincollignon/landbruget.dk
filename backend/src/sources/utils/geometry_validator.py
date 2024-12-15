@@ -13,6 +13,7 @@ def is_valid_for_bigquery(geom) -> bool:
     - No duplicate vertices
     - No empty rings
     - Edges can't cross
+    - Proper ring orientation
     """
     try:
         if not geom.is_valid or not geom.is_simple:
@@ -50,26 +51,23 @@ def is_valid_for_bigquery(geom) -> bool:
         logger.error(f"Error checking BigQuery validity: {str(e)}")
         return False
 
-def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str, tolerance: float = 0.1) -> gpd.GeoDataFrame:
+def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str) -> gpd.GeoDataFrame:
     """
     Validates and transforms geometries for BigQuery compatibility.
     
-    This function performs a series of cleanup operations to ensure geometries are valid
+    This function performs cleanup operations to ensure geometries are valid
     and meet BigQuery's requirements. All operations are performed in UTM zone 32N (EPSG:25832)
     where possible to maintain geometric precision for Danish data.
     
     The process:
     1. Converts to UTM (EPSG:25832)
     2. Cleans geometries with buffer(0) in UTM
-    3. Simplifies if tolerance is provided
-    4. Converts to WGS84 (EPSG:4326) for BigQuery
-    5. Final cleanup in WGS84
+    3. Converts to WGS84 (EPSG:4326) for BigQuery
+    4. Final cleanup and validation in WGS84
     
     Args:
         gdf: GeoDataFrame with geometries in any CRS
         dataset_name: Name of dataset for logging
-        tolerance: Simplification tolerance in meters (default: 0.1)
-                  Set to None to skip simplification
     
     Returns:
         GeoDataFrame with valid geometries in EPSG:4326
@@ -89,22 +87,7 @@ def validate_and_transform_geometries(gdf: gpd.GeoDataFrame, dataset_name: str, 
         
         # Initial cleanup in UTM
         logger.info(f"{dataset_name}: Performing initial cleanup")
-        original_areas = gdf.geometry.area
         gdf.geometry = gdf.geometry.apply(lambda g: g.buffer(0))
-        
-        # Simplify if tolerance is provided
-        if tolerance is not None:
-            logger.info(f"{dataset_name}: Simplifying geometries with tolerance {tolerance}")
-            gdf.geometry = gdf.geometry.apply(lambda g: g.simplify(tolerance))
-            
-            # Check area changes
-            new_areas = gdf.geometry.area
-            area_changes = ((new_areas - original_areas) / original_areas * 100)
-            max_change = area_changes.abs().max()
-            logger.info(f"{dataset_name}: Maximum area change during cleanup: {max_change:.6f}%")
-            
-            if max_change > 1.0:  # More than 1% change
-                logger.warning(f"{dataset_name}: Large area changes detected during cleanup")
         
         # Validate in UTM
         invalid_mask = ~gdf.geometry.is_valid

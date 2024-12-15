@@ -269,29 +269,54 @@ class WaterProjects(Source):
                 try:
                     logger.info(f"Initial CRS: {combined_gdf.crs}")
                     
-                    # Clean and prepare geometries before dissolve
-                    logger.info("Preparing geometries...")
-                    cleaned_gdf = validate_and_transform_geometries(combined_gdf, "water_projects")
+                    # Convert to WGS84 before dissolve
+                    if combined_gdf.crs.to_epsg() != 4326:
+                        logger.info("Converting to WGS84...")
+                        combined_gdf = combined_gdf.to_crs("EPSG:4326")
                     
-                    # Single dissolve operation on cleaned geometries
-                    dissolved = unary_union(cleaned_gdf.geometry.values)
+                    # Single dissolve operation in WGS84
+                    logger.info("Dissolving in WGS84...")
+                    dissolved = unary_union(combined_gdf.geometry.values)
                     logger.info(f"Dissolved geometry type: {dissolved.geom_type}")
-                    
-                    # Clean up after dissolve
-                    dissolved = dissolved.buffer(0)
                     
                     if dissolved.geom_type == 'MultiPolygon':
                         logger.info(f"Got MultiPolygon with {len(dissolved.geoms)} parts")
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=list(dissolved.geoms), crs="EPSG:4326")
+                        # Clean each geometry with buffer(0)
+                        cleaned_geoms = [geom.buffer(0) for geom in dissolved.geoms]
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=cleaned_geoms, crs="EPSG:4326")
                     else:
-                        dissolved_gdf = gpd.GeoDataFrame(geometry=[dissolved], crs="EPSG:4326")
+                        # Clean single geometry with buffer(0)
+                        cleaned = dissolved.buffer(0)
+                        dissolved_gdf = gpd.GeoDataFrame(geometry=[cleaned], crs="EPSG:4326")
                     
-                    # Convert to 4326 for storage
-                    logger.info("Converting to WGS84 for storage...")
-                    dissolved_gdf = dissolved_gdf.to_crs("EPSG:4326")
-                    
-                    # Validate final geometries before saving
-                    logger.info("Validating final dissolved geometries...")
+                    # Detailed geometry inspection after dissolve
+                    if dissolved.geom_type == 'MultiPolygon':
+                        logger.info(f"Post-dissolve parts: {len(dissolved.geoms)}")
+                        logger.info(f"Post-dissolve validity: {dissolved.is_valid}")
+                        logger.info(f"Post-dissolve simplicity: {dissolved.is_simple}")
+                        
+                        # Inspect each part in detail
+                        for i, part in enumerate(dissolved.geoms):
+                            if not part.is_valid or not part.is_simple:
+                                logger.error(f"Invalid part {i}:")
+                                logger.error(f"- Validity explanation: {explain_validity(part)}")
+                                logger.error(f"- Number of exterior points: {len(list(part.exterior.coords))}")
+                                logger.error(f"- Number of interior rings: {len(part.interiors)}")
+                                # Log coordinates of problematic part
+                                logger.error(f"- Exterior coordinates: {list(part.exterior.coords)}")
+                                for j, interior in enumerate(part.interiors):
+                                    logger.error(f"- Interior ring {j} coordinates: {list(interior.coords)}")
+                    else:
+                        if not dissolved.is_valid or not dissolved.is_simple:
+                            logger.error("Invalid single polygon:")
+                            logger.error(f"- Validity explanation: {explain_validity(dissolved)}")
+                            logger.error(f"- Number of exterior points: {len(list(dissolved.exterior.coords))}")
+                            logger.error(f"- Number of interior rings: {len(dissolved.interiors)}")
+                            logger.error(f"- Exterior coordinates: {list(dissolved.exterior.coords)}")
+                            for j, interior in enumerate(dissolved.interiors):
+                                logger.error(f"- Interior ring {j} coordinates: {list(interior.coords)}")
+
+                    # Final validation will handle BigQuery compatibility
                     dissolved_gdf = validate_and_transform_geometries(dissolved_gdf, f"{dataset}_dissolved")
                     
                     # Write dissolved version
@@ -496,56 +521,3 @@ def is_clockwise(coords):
         area += coords[i][0] * coords[j][1]
         area -= coords[j][0] * coords[i][1]
     return area > 0
-
-def is_valid_for_bigquery(geom) -> bool:
-    """
-    Check if geometry meets BigQuery geography requirements:
-    - Must be valid (no self-intersections)
-    - Outer rings must be clockwise
-    - Inner rings must be counter-clockwise
-    - No duplicate vertices
-    - No crossing edges
-    """
-    try:
-        if not geom.is_valid:
-            return False
-            
-        if isinstance(geom, (Polygon, MultiPolygon)):
-            # Check each polygon
-            polygons = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
-            
-            for poly in polygons:
-                # Check exterior ring
-                ext_coords = list(poly.exterior.coords)
-                if len(ext_coords) < 4:  # Need at least 4 points (first = last)
-                    return False
-                    
-                # Exterior must be clockwise
-                if not is_clockwise(ext_coords):
-                    return False
-                    
-                # Check for duplicate consecutive vertices
-                for i in range(len(ext_coords)-1):
-                    if ext_coords[i] == ext_coords[i+1]:
-                        return False
-                
-                # Check interior rings
-                for interior in poly.interiors:
-                    int_coords = list(interior.coords)
-                    if len(int_coords) < 4:
-                        return False
-                    
-                    # Interior must be counter-clockwise
-                    if is_clockwise(int_coords):
-                        return False
-                    
-                    # Check for duplicate consecutive vertices in interior
-                    for i in range(len(int_coords)-1):
-                        if int_coords[i] == int_coords[i+1]:
-                            return False
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error checking BigQuery validity: {str(e)}")
-        return False
