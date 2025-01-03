@@ -2,7 +2,7 @@ from .wetlands import Wetlands
 from .cadastral import Cadastral
 from .water_projects import WaterProjects
 from .agricultural_fields import AgriculturalFields
-from .herd_data import HerdDataParser
+from .chr_data import CHRDataParser
 from .bnbo_status import BNBOStatus
 
 def get_source_handler(source_id: str, config: dict):
@@ -12,7 +12,7 @@ def get_source_handler(source_id: str, config: dict):
         'wetlands': Wetlands,
         'cadastral': Cadastral,
         'agricultural_fields': AgriculturalFields,
-        'herd_data': HerdDataParser,
+        'chr_data': CHRDataParser,
         'bnbo_status': BNBOStatus
     }
     
